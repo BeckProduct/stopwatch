@@ -28,18 +28,28 @@ import 'wall_clock.dart';
 /// the wall gap unconditionally would double-count every suspension on any
 /// platform whose monotonic clock keeps running.
 class RunSession {
-  RunSession({
-    required this.store,
+  factory RunSession({
+    required RunStore store,
     MonotonicClock? monotonic,
-    this.wall = const SystemWallClock(),
-  }) : _monotonic = monotonic ?? SystemMonotonicClock(),
-       _engine = TimingEngine(clock: monotonic);
+    WallClock wall = const SystemWallClock(),
+  }) => RunSession._(store, monotonic ?? SystemMonotonicClock(), wall);
+
+  /// Takes the resolved clock, so the session and the engine it builds cannot
+  /// end up on two different ones — which is what happens if the nullable is
+  /// forwarded and each side defaults it separately.
+  RunSession._(this.store, MonotonicClock monotonic, this.wall)
+    : _monotonic = monotonic,
+      _engine = TimingEngine(clock: monotonic);
 
   final RunStore store;
   final WallClock wall;
   final MonotonicClock _monotonic;
 
   TimingEngine _engine;
+
+  /// Exposed so a test can prove this and [engine] read the same clock.
+  @visibleForTesting
+  MonotonicClock get monotonic => _monotonic;
 
   /// Replaced wholesale by [restore], so read it fresh rather than holding it.
   TimingEngine get engine => _engine;
@@ -70,6 +80,11 @@ class RunSession {
     if (snapshot.state != TimingState.running) return snapshot.elapsed;
 
     final gap = wall.now.difference(snapshot.takenAt);
+    // This sum cannot overflow, and not by luck: RunSnapshot rejects an elapsed
+    // past RunSnapshot.maxRun and a takenAt outside its sane window, so both
+    // terms are bounded long before they reach here. Validating at the parse
+    // boundary is what lets every reader downstream do plain arithmetic.
+    //
     // A wall clock stepped backwards between write and read must never rewind
     // the dial. Losing the gap is wrong; running the clock backwards is worse.
     return gap.isNegative ? snapshot.elapsed : snapshot.elapsed + gap;

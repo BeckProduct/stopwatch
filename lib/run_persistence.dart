@@ -35,6 +35,27 @@ class RunSnapshot {
   /// discarded rather than guessed at.
   static const int _version = 1;
 
+  /// The longest run that will ever be restored.
+  ///
+  /// A stopwatch left running for a year is not a run in progress. Bounding it
+  /// here is also what keeps the arithmetic downstream inside 64 bits: nothing
+  /// that reads a snapshot has to defend itself against a maxInt elapsed,
+  /// because one never gets past this point.
+  static const Duration maxRun = Duration(days: 365);
+
+  /// More marks than a person can press in [maxRun], by a wide margin. A record
+  /// claiming more is not a run, it is a way to exhaust memory on launch.
+  static const int maxSplits = 100000;
+
+  /// The window [takenAt] must fall inside.
+  ///
+  /// Outside it there is no run to reconstruct — a device claiming 1904 or
+  /// 40000 cannot tell us how long the app was dead. The far ends are also
+  /// where `DateTime.fromMicrosecondsSinceEpoch` itself throws, so bounding the
+  /// value is what makes constructing it safe.
+  static final DateTime earliestSaneInstant = DateTime.utc(2001);
+  static final DateTime latestSaneInstant = DateTime.utc(2200);
+
   Map<String, Object?> toJson() => {
     'version': _version,
     'state': state.name,
@@ -43,42 +64,68 @@ class RunSnapshot {
     'takenAtMicros': takenAt.microsecondsSinceEpoch,
   };
 
-  /// Returns null for anything unreadable — wrong version, missing field, wrong
-  /// type, or a state that should never have been written. A corrupt record is
-  /// treated as no record, so a bad write can never wedge the app on launch.
+  /// Reads a record, or returns null if it cannot be wholly trusted.
+  ///
+  /// A persisted record is untrusted input: it may have been written by an
+  /// older build, truncated by a kill mid-write, or corrupted on disk. So this
+  /// checks the *domain* and not merely the types — a negative elapsed, splits
+  /// out of order, a nonsense instant and a maxInt overflow are all shapes that
+  /// type checks wave through and that every reader downstream would then have
+  /// to defend against separately.
+  ///
+  /// Any failure at all means the same thing — there is no usable record — so
+  /// there is one catch-all rather than a list of exception types to forget to
+  /// keep up to date.
   static RunSnapshot? tryParse(String source) {
     try {
-      final json = jsonDecode(source);
-      if (json is! Map<String, Object?>) return null;
-      if (json['version'] != _version) return null;
-
-      final state = TimingState.values.asNameMap()[json['state']];
-      if (state == null || state == TimingState.idle) return null;
-
-      final elapsedMicros = json['elapsedMicros'];
-      final takenAtMicros = json['takenAtMicros'];
-      final splitMicros = json['splitMicros'];
-      if (elapsedMicros is! int ||
-          takenAtMicros is! int ||
-          splitMicros is! List) {
-        return null;
-      }
-
-      final splits = <Duration>[];
-      for (final micros in splitMicros) {
-        if (micros is! int) return null;
-        splits.add(Duration(microseconds: micros));
-      }
-
-      return RunSnapshot(
-        state: state,
-        elapsed: Duration(microseconds: elapsedMicros),
-        splits: splits,
-        takenAt: DateTime.fromMicrosecondsSinceEpoch(takenAtMicros),
-      );
-    } on FormatException {
+      return _parse(source);
+    } catch (_) {
       return null;
     }
+  }
+
+  static RunSnapshot? _parse(String source) {
+    final json = jsonDecode(source);
+    if (json is! Map<String, Object?>) return null;
+    if (json['version'] != _version) return null;
+
+    final state = TimingState.values.asNameMap()[json['state']];
+    // Idle is the absence of a run, so a record claiming it is already wrong.
+    if (state == null || state == TimingState.idle) return null;
+
+    final elapsedMicros = json['elapsedMicros'];
+    final takenAtMicros = json['takenAtMicros'];
+    final splitMicros = json['splitMicros'];
+    if (elapsedMicros is! int ||
+        takenAtMicros is! int ||
+        splitMicros is! List) {
+      return null;
+    }
+
+    if (elapsedMicros < 0 || elapsedMicros > maxRun.inMicroseconds) return null;
+    if (takenAtMicros < earliestSaneInstant.microsecondsSinceEpoch ||
+        takenAtMicros > latestSaneInstant.microsecondsSinceEpoch) {
+      return null;
+    }
+    if (splitMicros.length > maxSplits) return null;
+
+    final splits = <Duration>[];
+    var previous = 0;
+    for (final micros in splitMicros) {
+      // Marks are cumulative, so they run forward and stop at the dial reading.
+      // Out of order or past the end, lap arithmetic produces a negative lap.
+      if (micros is! int) return null;
+      if (micros < previous || micros > elapsedMicros) return null;
+      previous = micros;
+      splits.add(Duration(microseconds: micros));
+    }
+
+    return RunSnapshot(
+      state: state,
+      elapsed: Duration(microseconds: elapsedMicros),
+      splits: splits,
+      takenAt: DateTime.fromMicrosecondsSinceEpoch(takenAtMicros),
+    );
   }
 }
 
@@ -106,12 +153,28 @@ class PreferencesRunStore implements RunStore {
 
   @override
   Future<RunSnapshot?> read() async {
-    final source = await _preferences.getString(_key);
+    final String? source;
+    try {
+      source = await _preferences.getString(_key);
+    } catch (_) {
+      // The store itself is unreadable. There is nothing to restore and
+      // nothing to discard, and launch must not depend on either.
+      return null;
+    }
     if (source == null) return null;
+
     final snapshot = RunSnapshot.tryParse(source);
-    // Drop anything unreadable so it cannot be re-read on every launch.
-    if (snapshot == null) await clear();
-    return snapshot;
+    if (snapshot != null) return snapshot;
+
+    // Unreadable, so discard it — otherwise the same bad record is re-read on
+    // every subsequent launch and the app is wedged for good. The discard is
+    // itself allowed to fail without taking launch down with it.
+    try {
+      await clear();
+    } catch (_) {
+      return null;
+    }
+    return null;
   }
 
   @override

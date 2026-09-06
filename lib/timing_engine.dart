@@ -1,5 +1,7 @@
 import 'dart:collection';
 
+import 'package:meta/meta.dart';
+
 import 'monotonic_clock.dart';
 
 /// Where the chronograph is in its cycle.
@@ -82,6 +84,13 @@ class TimingEngine {
   /// The clock reading at which the current run began. Meaningless unless
   /// running.
   Duration _runStartedAt = Duration.zero;
+
+  /// The clock this engine reads.
+  ///
+  /// Exposed so a test can prove that a session and the engine it builds share
+  /// one clock rather than defaulting to two.
+  @visibleForTesting
+  MonotonicClock get clock => _clock;
 
   TimingState get state => _state;
 

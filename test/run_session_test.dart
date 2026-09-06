@@ -260,4 +260,26 @@ void main() {
       expect(revived.engine.splits, isEmpty);
     });
   });
+
+  group('one clock', () {
+    test('the session and its engine read the same clock instance', () {
+      // The production path: no clock injected, so both sides would otherwise
+      // default to a SystemMonotonicClock of their own.
+      final production = RunSession(store: MemoryRunStore());
+
+      expect(identical(production.engine.clock, production.monotonic), isTrue);
+    });
+
+    test('a restored engine keeps reading that same clock', () async {
+      await session.start();
+      clocks.advance(const Duration(seconds: 5));
+      await session.persist();
+
+      final revived = relaunch();
+      await revived.restore();
+
+      expect(identical(revived.engine.clock, revived.monotonic), isTrue);
+      expect(identical(revived.engine.clock, clocks.monotonic), isTrue);
+    });
+  });
 }
