@@ -1,122 +1,131 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
+
+import 'timing_engine.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const StopwatchApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class StopwatchApp extends StatelessWidget {
+  const StopwatchApp({super.key});
 
-  // This widget is the root of your application.
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Flutter Demo',
-      theme: ThemeData(
-        // This is the theme of your application.
-        //
-        // TRY THIS: Try running your application with "flutter run". You'll see
-        // the application has a purple toolbar. Then, without quitting the app,
-        // try changing the seedColor in the colorScheme below to Colors.green
-        // and then invoke "hot reload" (save your changes or press the "hot
-        // reload" button in a Flutter-supported IDE, or press "r" if you used
-        // the command line to start the app).
-        //
-        // Notice that the counter didn't reset back to zero; the application
-        // state is not lost during the reload. To reset the state, use hot
-        // restart instead.
-        //
-        // This works for code too, not just values: Most code changes can be
-        // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
-      ),
-      home: const MyHomePage(title: 'Flutter Demo Home Page'),
-    );
+    return const MaterialApp(title: 'Stopwatch', home: EngineHarness());
   }
 }
 
-class MyHomePage extends StatefulWidget {
-  const MyHomePage({super.key, required this.title});
+/// A deliberately plain screen that proves the engine ticks.
+///
+/// Not the chronograph and not a sketch of it — PAT-209 replaces this wholesale
+/// against the UI spec. Nothing here is a design decision worth carrying
+/// forward, but two things about it are worth keeping:
+///
+/// * it reads [TimingEngine.elapsed] exactly once per frame and derives
+///   everything shown from that one value, and
+/// * the ticker runs only while the engine does.
+class EngineHarness extends StatefulWidget {
+  const EngineHarness({super.key, this.engine});
 
-  // This widget is the home page of your application. It is stateful, meaning
-  // that it has a State object (defined below) that contains fields that affect
-  // how it looks.
-
-  // This class is the configuration for the state. It holds the values (in this
-  // case the title) provided by the parent (in this case the App widget) and
-  // used by the build method of the State. Fields in a Widget subclass are
-  // always marked "final".
-
-  final String title;
+  /// Injectable so a widget test can drive the clock behind it.
+  final TimingEngine? engine;
 
   @override
-  State<MyHomePage> createState() => _MyHomePageState();
+  State<EngineHarness> createState() => _EngineHarnessState();
 }
 
-class _MyHomePageState extends State<MyHomePage> {
-  int _counter = 0;
+class _EngineHarnessState extends State<EngineHarness>
+    with SingleTickerProviderStateMixin {
+  late final TimingEngine _engine = widget.engine ?? TimingEngine();
+  late final Ticker _ticker = createTicker((_) => setState(() {}));
 
-  void _incrementCounter() {
+  @override
+  void dispose() {
+    _ticker.dispose();
+    super.dispose();
+  }
+
+  void _toggleRun() {
     setState(() {
-      // This call to setState tells the Flutter framework that something has
-      // changed in this State, which causes it to rerun the build method below
-      // so that the display can reflect the updated values. If we changed
-      // _counter without calling setState(), then the build method would not be
-      // called again, and so nothing would appear to happen.
-      _counter++;
+      if (_engine.isRunning) {
+        _engine.stop();
+        _ticker.stop();
+      } else {
+        _engine.start();
+        _ticker.start();
+      }
     });
   }
 
+  void _split() => setState(_engine.split);
+
+  void _reset() => setState(_engine.reset);
+
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    // One reading, one frame: every digit below comes from this value.
+    final elapsed = _engine.elapsed;
+    final laps = _engine.lapTimes;
+
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
-      body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
+      body: SafeArea(
         child: Column(
-          // Column is also a layout widget. It takes a list of children and
-          // arranges them vertically. By default, it sizes itself to fit its
-          // children horizontally, and tries to be as tall as its parent.
-          //
-          // Column has various properties to control how it sizes itself and
-          // how it positions its children. Here we use mainAxisAlignment to
-          // center the children vertically; the main axis here is the vertical
-          // axis because Columns are vertical (the cross axis would be
-          // horizontal).
-          //
-          // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-          // action in the IDE, or press "p" in the console), to see the
-          // wireframe for each widget.
-          mainAxisAlignment: .center,
           children: [
-            const Text('You have pushed the button this many times:'),
+            const Spacer(),
             Text(
-              '$_counter',
-              style: Theme.of(context).textTheme.headlineMedium,
+              _format(elapsed),
+              style: const TextStyle(
+                fontSize: 56,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+            ),
+            Text(_engine.state.name),
+            const SizedBox(height: 24),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              spacing: 12,
+              children: [
+                FilledButton(
+                  onPressed: _toggleRun,
+                  child: Text(_engine.isRunning ? 'Stop' : 'Start'),
+                ),
+                OutlinedButton(
+                  onPressed: _engine.isRunning ? _split : null,
+                  child: const Text('Lap'),
+                ),
+                OutlinedButton(
+                  onPressed: _engine.state == TimingState.stopped
+                      ? _reset
+                      : null,
+                  child: const Text('Reset'),
+                ),
+              ],
+            ),
+            const Spacer(),
+            Expanded(
+              child: ListView.builder(
+                itemCount: laps.length,
+                itemBuilder: (context, index) {
+                  final lap = laps[laps.length - 1 - index];
+                  return ListTile(
+                    dense: true,
+                    title: Text('Lap ${laps.length - index}'),
+                    trailing: Text(_format(lap)),
+                  );
+                },
+              ),
             ),
           ],
         ),
       ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _incrementCounter,
-        tooltip: 'Increment',
-        child: const Icon(Icons.add),
-      ),
     );
   }
+}
+
+String _format(Duration d) {
+  final minutes = d.inMinutes.toString().padLeft(2, '0');
+  final seconds = (d.inSeconds % 60).toString().padLeft(2, '0');
+  final hundredths = (d.inMilliseconds % 1000 ~/ 10).toString().padLeft(2, '0');
+  return '$minutes:$seconds.$hundredths';
 }
