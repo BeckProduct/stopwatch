@@ -260,10 +260,20 @@ void main() {
       expect(engine.split, throwsStateError);
     });
 
-    test('split is rejected while stopped', () {
+    // Replaces 'split is rejected while stopped'. That assertion contradicted
+    // the chronograph's own mechanism: a stopped watch holding a frozen split
+    // hand is a real state, and recording a final lap after stopping is what
+    // it is for. Only idle refuses now -- there is nothing yet to mark.
+    test('split is accepted while stopped, and the lap equals the total', () {
       engine.start();
+      clock.advance(const Duration(seconds: 4));
       engine.stop();
 
+      expect(engine.split(), const Duration(seconds: 4));
+      expect(engine.lapTimes, [const Duration(seconds: 4)]);
+    });
+
+    test('split is rejected while idle', () {
       expect(engine.split, throwsStateError);
     });
 
