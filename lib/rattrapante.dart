@@ -36,7 +36,6 @@ enum SplitState {
 class RattrapanteController extends ChangeNotifier {
   RattrapanteController({required this.clock});
 
-
   static const double overshootDeg = 3.2;
   static const int settleMs = 90;
   static const Cubic easeWhip = Cubic(0.20, 0.90, 0.35, 1.00);
@@ -100,7 +99,9 @@ class RattrapanteController extends ChangeNotifier {
   void release({required Duration elapsed, required bool reduceMotion}) {
     _reduceMotion = reduceMotion;
     _releasedAt = clock.now;
-    _fromDeg = sweepDegFor(quantise(_frozenElapsed, reduceMotion: reduceMotion));
+    _fromDeg = sweepDegFor(
+      quantise(_frozenElapsed, reduceMotion: reduceMotion),
+    );
     final behind = elapsed - _frozenElapsed;
     // Capped at two turns: a 40-minute split would spin 40 times in 240 ms and
     // strobe into noise. Cosmetic only -- the hand still lands on the live

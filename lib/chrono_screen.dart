@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -23,7 +25,7 @@ class ChronoScreen extends StatefulWidget {
 }
 
 class _ChronoScreenState extends State<ChronoScreen>
-    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
+    with TickerProviderStateMixin, WidgetsBindingObserver {
   late final MonotonicClock _clock = widget.clock ?? SystemMonotonicClock();
   late final TimingEngine _engine =
       widget.engine ?? TimingEngine(clock: _clock);
@@ -110,10 +112,7 @@ class _ChronoScreenState extends State<ChronoScreen>
       if (_split.state == SplitState.joined) {
         _split.freeze(_engine.split());
       } else {
-        _split.release(
-          elapsed: _engine.elapsed,
-          reduceMotion: _reduceMotion,
-        );
+        _split.release(elapsed: _engine.elapsed, reduceMotion: _reduceMotion);
       }
     });
   }
@@ -162,13 +161,35 @@ class _ChronoScreenState extends State<ChronoScreen>
           ),
         ),
         child: SafeArea(
-          child: Column(
-            children: [
-              _watch(chrono, elapsed, splitDeg, reduceMotion, splits.length),
-              const SizedBox(height: 8),
-              _readout(chrono, elapsed, splits, laps),
-              Expanded(child: _lapStack(chrono, splits, laps)),
-            ],
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              // The case keeps its aspect ratio and gives way to the readout on
+              // a short screen rather than overflowing it.
+              final side = math
+                  .min(
+                    constraints.maxWidth,
+                    constraints.maxHeight *
+                        0.62 *
+                        Dial.boxWidth /
+                        Dial.boxHeight,
+                  )
+                  .clamp(0.0, 402.0);
+              return Column(
+                children: [
+                  _watch(
+                    chrono,
+                    elapsed,
+                    splitDeg,
+                    reduceMotion,
+                    splits.length,
+                    side,
+                  ),
+                  const SizedBox(height: 8),
+                  _readout(chrono, elapsed, splits, laps),
+                  Expanded(child: _lapStack(chrono, splits, laps)),
+                ],
+              );
+            },
           ),
         ),
       ),
@@ -181,79 +202,79 @@ class _ChronoScreenState extends State<ChronoScreen>
     double splitDeg,
     bool reduceMotion,
     int lapCount,
+    double side,
   ) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final side = constraints.maxWidth.clamp(0.0, 402.0);
-        return SizedBox(
-          width: side,
-          height: side * Dial.boxHeight / Dial.boxWidth,
-          child: Stack(
-            children: [
-              Positioned.fill(
-                child: ExcludeSemantics(
-                  child: AnimatedBuilder(
-                    animation: Listenable.merge([
-                      _startTravel,
-                      _crownTravel,
-                      _resetTravel,
-                    ]),
-                    builder: (context, _) => CustomPaint(
-                      painter: ChronoPainter(
-                        theme: chrono,
-                        elapsed: elapsed,
-                        splitDeg: splitDeg,
-                        splitState: _split.state,
-                        lapCount: lapCount,
-                        reduceMotion: reduceMotion,
-                        pusherTravel: (
-                          start: _startTravel.value,
-                          crown: _crownTravel.value,
-                          reset: _resetTravel.value,
-                        ),
-                        smearFromDeg: _split.smearsThisFrame
-                            ? _split.previousDeg
-                            : null,
-                        splitFade: _split.isReducedMotionFade
-                            ? (_split.fadeProgress < 0.5 ? 1.0 : 1.0)
-                            : 1.0,
-                      ),
+    return SizedBox(
+      width: side,
+      height: side * Dial.boxHeight / Dial.boxWidth,
+      child: Stack(
+        children: [
+          Positioned.fill(
+            child: ExcludeSemantics(
+              child: AnimatedBuilder(
+                animation: Listenable.merge([
+                  _startTravel,
+                  _crownTravel,
+                  _resetTravel,
+                ]),
+                builder: (context, _) => CustomPaint(
+                  painter: ChronoPainter(
+                    theme: chrono,
+                    elapsed: elapsed,
+                    splitDeg: splitDeg,
+                    splitState: _split.state,
+                    lapCount: lapCount,
+                    reduceMotion: reduceMotion,
+                    pusherTravel: (
+                      start: _startTravel.value,
+                      crown: _crownTravel.value,
+                      reset: _resetTravel.value,
                     ),
+                    smearFromDeg: _split.smearsThisFrame
+                        ? _split.previousDeg
+                        : null,
+                    splitFade: _split.isReducedMotionFade
+                        ? (_split.fadeProgress < 0.5 ? 1.0 : 1.0)
+                        : 1.0,
                   ),
                 ),
               ),
-              // Case controls. Hit targets sit over the pushers on the right
-              // flank; the painted heads move, the targets do not.
-              _hit(
-                top: 0.16,
-                label: _engine.isRunning ? 'Stop' : 'Start',
-                enabled: true,
-                onTap: _pressStart,
-              ),
-              _hit(
-                top: 0.42,
-                label: _split.state == SplitState.frozen
-                    ? 'Rejoin split hand'
-                    : 'Split',
-                enabled: _engine.state != TimingState.idle,
-                busy: _split.isCatchingUp,
-                onTap: _pressCrown,
-              ),
-              _hit(
-                top: 0.66,
-                label: 'Reset',
-                // "blocked" is semantically disabled even though nothing dims.
-                enabled: !_engine.isRunning,
-                onTap: _pressReset,
-              ),
-            ],
+            ),
           ),
-        );
-      },
+          // Case controls. Hit targets sit over the pushers on the right
+          // flank; the painted heads move, the targets do not.
+          _hit(
+            side: side,
+            top: 0.16,
+            label: _engine.isRunning ? 'Stop' : 'Start',
+            enabled: true,
+            onTap: _pressStart,
+          ),
+          _hit(
+            side: side,
+            top: 0.42,
+            label: _split.state == SplitState.frozen
+                ? 'Rejoin split hand'
+                : 'Split',
+            enabled: _engine.state != TimingState.idle,
+            busy: _split.isCatchingUp,
+            onTap: _pressCrown,
+          ),
+          _hit(
+            side: side,
+            top: 0.66,
+            label: 'Reset',
+            // "blocked" is semantically disabled even though nothing dims.
+            enabled: !_engine.isRunning,
+            onTap: _pressReset,
+          ),
+        ],
+      ),
     );
   }
 
   Widget _hit({
+    required double side,
     required double top,
     required String label,
     required bool enabled,
@@ -262,7 +283,7 @@ class _ChronoScreenState extends State<ChronoScreen>
   }) {
     return Positioned(
       right: 0,
-      top: top * 402,
+      top: top * side,
       child: Semantics(
         button: true,
         enabled: enabled,

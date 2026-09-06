@@ -246,7 +246,13 @@ class ChronoPainter extends CustomPainter {
       ..color = theme.ink.withValues(alpha: 0.5);
     for (var i = 0; i < 300; i++) {
       if (i % 5 == 0) continue;
-      _tick(canvas, Dial.rFifthInner, Dial.rFifthOuter, i.toDouble() * 1.2, fifth);
+      _tick(
+        canvas,
+        Dial.rFifthInner,
+        Dial.rFifthOuter,
+        i.toDouble() * 1.2,
+        fifth,
+      );
     }
 
     final minor = _p
@@ -394,11 +400,10 @@ class ChronoPainter extends CustomPainter {
       centre,
       Dial.registerRadius,
       _p
-        ..shader = ui.Gradient.radial(
-          centre.translate(-12, -14),
-          0.9 * 84,
-          [theme.reg0, theme.reg1],
-        ),
+        ..shader = ui.Gradient.radial(centre.translate(-12, -14), 0.9 * 84, [
+          theme.reg0,
+          theme.reg1,
+        ]),
     );
     canvas.drawCircle(
       centre,
@@ -496,11 +501,7 @@ class ChronoPainter extends CustomPainter {
       ..close();
     canvas.save();
     canvas.clipPath(path);
-    canvas.drawCircle(
-      _c,
-      200,
-      _p..color = theme.rat1.withValues(alpha: 0.24),
-    );
+    canvas.drawCircle(_c, 200, _p..color = theme.rat1.withValues(alpha: 0.24));
     canvas.drawCircle(_c, 60, _p..blendMode = BlendMode.clear);
     canvas.restore();
   }
