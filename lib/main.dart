@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 
+import 'chrono_screen.dart';
+import 'chrono_theme.dart';
 import 'run_persistence.dart';
 import 'run_session.dart';
 import 'timing_engine.dart';
@@ -16,17 +18,23 @@ class StopwatchApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return const MaterialApp(title: 'Stopwatch', home: EngineHarness());
+    return MaterialApp(
+      title: 'Stopwatch',
+      debugShowCheckedModeBanner: false,
+      theme: chronoThemeData(Brightness.light),
+      darkTheme: chronoThemeData(Brightness.dark),
+      home: const ChronoScreen(),
+    );
   }
 }
 
-/// A deliberately plain screen that proves the engine ticks and survives.
+/// The persistence harness from PAT-210, no longer the app's home screen.
 ///
-/// Not the chronograph and not a sketch of it — PAT-209 replaces this wholesale
-/// against the UI spec. What is worth carrying forward is not the layout but
-/// the wiring: it reads [TimingEngine.elapsed] once per frame, runs the ticker
-/// only while the engine does, and hands every lifecycle transition to
-/// [RunSession].
+/// [ChronoScreen] is what the app shows now. This is kept because it is the
+/// only thing that currently drives [RunSession] through a widget tree, and
+/// PAT-210's lifecycle tests assert against it. Wiring [ChronoScreen] onto
+/// [RunSession] so a run survives a suspend is the follow-up; until it lands,
+/// the chronograph face keeps its own engine and does not restore.
 class EngineHarness extends StatefulWidget {
   const EngineHarness({super.key, this.session});
 

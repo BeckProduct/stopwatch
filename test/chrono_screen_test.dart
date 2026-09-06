@@ -1,0 +1,86 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:stopwatch/chrono_screen.dart';
+import 'package:stopwatch/chrono_theme.dart';
+import 'package:stopwatch/timing_engine.dart';
+
+import 'support/fake_monotonic_clock.dart';
+
+void main() {
+  Future<void> pumpScreen(
+    WidgetTester tester,
+    FakeMonotonicClock clock,
+    TimingEngine engine,
+  ) {
+    return tester.pumpWidget(
+      MaterialApp(
+        theme: chronoThemeData(Brightness.light),
+        home: ChronoScreen(engine: engine, clock: clock),
+      ),
+    );
+  }
+
+  testWidgets('the readout tracks the injected clock', (tester) async {
+    final clock = FakeMonotonicClock();
+    final engine = TimingEngine(clock: clock);
+    await pumpScreen(tester, clock, engine);
+
+    expect(find.text('00:00.00'), findsOneWidget);
+
+    await tester.tap(find.bySemanticsLabel('Start'));
+    await tester.pump();
+    clock.advance(const Duration(milliseconds: 1230));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    expect(find.text('00:01.23'), findsOneWidget);
+  });
+
+  testWidgets('the split pusher is disabled at idle and enabled once running', (
+    tester,
+  ) async {
+    final clock = FakeMonotonicClock();
+    final engine = TimingEngine(clock: clock);
+    await pumpScreen(tester, clock, engine);
+
+    // "ignored" at idle: disabled, and the press records no lap.
+    await tester.tap(find.bySemanticsLabel('Split'));
+    await tester.pump();
+    expect(engine.splits, isEmpty);
+
+    await tester.tap(find.bySemanticsLabel('Start'));
+    await tester.pump();
+    clock.advance(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(find.bySemanticsLabel('Split'));
+    await tester.pump();
+    expect(engine.splits, [const Duration(seconds: 5)]);
+    // The label flips only on split state, never on run state.
+    expect(find.bySemanticsLabel('Rejoin split hand'), findsOneWidget);
+  });
+
+  testWidgets('reset is refused while running and clears once stopped', (
+    tester,
+  ) async {
+    final clock = FakeMonotonicClock();
+    final engine = TimingEngine(clock: clock);
+    await pumpScreen(tester, clock, engine);
+
+    await tester.tap(find.bySemanticsLabel('Start'));
+    await tester.pump();
+    clock.advance(const Duration(seconds: 3));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(find.bySemanticsLabel('Reset'));
+    await tester.pump();
+    expect(engine.state, TimingState.running, reason: 'blocked while running');
+
+    await tester.tap(find.bySemanticsLabel('Stop'));
+    await tester.pump();
+    await tester.tap(find.bySemanticsLabel('Reset'));
+    await tester.pump();
+
+    expect(engine.state, TimingState.idle);
+    expect(find.text('00:00.00'), findsOneWidget);
+  });
+}

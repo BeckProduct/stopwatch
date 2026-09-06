@@ -185,9 +185,14 @@ class TimingEngine {
   }
 
   /// Records the current [elapsed] as a cumulative mark and returns it.
+  ///
+  /// Legal while running and while stopped. A stopped chronograph with a
+  /// frozen split hand is a real state on a real watch, and it is what lets
+  /// someone record a final lap after stopping; that lap equals the total. Only
+  /// [idle] refuses, because there is nothing yet to mark.
   Duration split() {
-    if (!isRunning) {
-      throw StateError('Cannot split: not running (state is $_state).');
+    if (_state == TimingState.idle) {
+      throw StateError('Cannot split: nothing to mark yet (state is $_state).');
     }
     final mark = elapsed;
     _splits.add(mark);
