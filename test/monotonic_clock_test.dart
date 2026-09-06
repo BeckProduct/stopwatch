@@ -27,12 +27,28 @@ void main() {
 
     test('two clocks advance independently of each other', () {
       final first = SystemMonotonicClock();
-      for (var i = 0; i < 1000; i++) {
-        first.now;
-      }
+      // Burn measurable time so the two origins cannot coincide.
+      final spin = Stopwatch()..start();
+      while (spin.elapsedMicroseconds < 2000) {}
       final second = SystemMonotonicClock();
 
-      expect(second.now, lessThanOrEqualTo(first.now));
+      // Strictly less, never "at most". Two clocks sharing one source read
+      // identically, which satisfies lessThanOrEqualTo -- so that assertion
+      // passed on exactly the implementation it was written to rule out.
+      expect(second.now, lessThan(first.now));
+
+      // And the gap is the difference in their ages, so it persists rather
+      // than closing. A shared source has no gap to persist.
+      final gapBefore = first.now - second.now;
+      while (spin.elapsedMicroseconds < 8000) {}
+      final gapAfter = first.now - second.now;
+
+      expect(gapAfter, greaterThan(Duration.zero));
+      expect(
+        (gapAfter - gapBefore).abs(),
+        lessThan(const Duration(milliseconds: 50)),
+        reason: 'both clocks run at the same rate, only from different origins',
+      );
     });
   });
 
@@ -50,6 +66,28 @@ void main() {
       final clock = FakeMonotonicClock();
 
       expect(clock.now, clock.now);
+    });
+
+    test('advances on every read when given a tick', () {
+      final clock = FakeMonotonicClock(
+        tickPerRead: const Duration(milliseconds: 10),
+      );
+
+      final first = clock.now;
+      final second = clock.now;
+
+      expect(second - first, const Duration(milliseconds: 10));
+    });
+
+    test('a tick does not stop it being advanced by hand', () {
+      final clock = FakeMonotonicClock(
+        tickPerRead: const Duration(milliseconds: 10),
+      );
+
+      final before = clock.now; // reading 1, clock now +10ms
+      clock.advance(const Duration(seconds: 1));
+
+      expect(clock.now - before, const Duration(milliseconds: 1010));
     });
 
     test('refuses to go backwards', () {
