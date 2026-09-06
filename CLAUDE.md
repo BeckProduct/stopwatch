@@ -3,11 +3,11 @@
 A single-purpose stopwatch for iOS, presented as a mechanical chronograph. One screen, done to a
 high finish.
 
-**The code is the current design.** The UI spec artifact `stopwatch-spec.html`, attached to the
-early tickets and living in the umbrella's `.orchestrator/stopwatch/`, is **historical**: it still
-draws the cased face with a lap register, which PAT-214 replaced with an uncased dial, the controls
-below it and a tenths register. Read it for intent, never for what the screen looks like.
-`design-notes.md` sits alongside it and is likewise a record, not a spec.
+**The code is the current design.** The UI spec artifact `stopwatch-spec.html`, in the umbrella's
+`.orchestrator/stopwatch/` and cited by path in the early tickets, is **historical**: it still draws
+the cased face with a lap register, which PAT-214 replaced with an uncased dial, the controls below
+it and a tenths register. Read it for intent, never for what the screen looks like. `design-notes.md`
+sits alongside it and is likewise a record, not a spec.
 
 ---
 
@@ -89,9 +89,7 @@ nobody anything.
 > orchestrator guardrails forbid the orchestrator from implementing. No brief → this section is
 > not for you.
 >
-> Cut your branch fresh from the latest `develop` (fetch first). Branch naming, the push refspec
-> and the PR command are `git-conventions`' — load it and follow it. Repo-specific: base the PR on
-> `develop`, reviewer `reviewbeck`.
+> Branching, pushing and opening the PR are `git-conventions`' — load it and follow it.
 >
 > Work that needs the simulator: ensure your runtime side pane exists (create it if missing,
 > labeled `flutter-run`) and keep `flutter run -d "iPhone 17 Pro"` running there, watching for
