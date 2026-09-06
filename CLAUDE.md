@@ -48,8 +48,9 @@ Violating this is an auto-FAIL, not a code-review preference.
 ## iOS specifics
 
 - **iOS only.** No Android, no web, no desktop. Do not add platform folders.
-- The Live Activity / Dynamic Island is a **Swift widget extension** under `ios/`. It is the only
-  non-Dart code in the project.
+- The Live Activity / Dynamic Island is a **Swift widget extension**, `ios/ChronoLiveActivity/`.
+  It talks to Dart through `ios/Runner/LiveActivityBridge.swift`, which compiles into the Runner
+  target alongside the usual `AppDelegate`/`SceneDelegate` and the bridging header.
 - Any change to `ios/Runner.xcodeproj`, signing, entitlements or `Info.plist` is broad-impact:
   say what it affects before making it.
 - Simulator target: **iPhone 17 Pro**.
@@ -61,8 +62,6 @@ Violating this is an auto-FAIL, not a code-review preference.
 - Timing and lap logic → unit tests, driven by an injectable clock. A test that needs `sleep` is
   the wrong test.
 - Widget behaviour (pusher enablement, state transitions, lap stack) → widget tests.
-- **Verify by falsification.** A test that still passes when you revert the change it covers is
-  not a test. Say so if you could not falsify one.
 - Painters are exempt from pixel assertions; test the geometry functions they call instead.
 
 ---
@@ -84,10 +83,8 @@ nobody anything.
 
 ## Herdr orchestration (gated)
 
-> **Only if `HERDR_ENV=1` AND you were launched with an implementation brief naming a ticket.**
-> The `HERDR_ENV` check alone is not sufficient — the orchestrator satisfies it too, and the
-> orchestrator guardrails forbid the orchestrator from implementing. No brief → this section is
-> not for you.
+> **Only if `HERDR_ENV=1` AND you hold an implementation brief naming a ticket.** The orchestrator
+> satisfies `HERDR_ENV` too and is forbidden from implementing. No brief → not for you.
 >
 > Branching, pushing and opening the PR are `git-conventions`' — load it and follow it.
 >
@@ -96,8 +93,5 @@ nobody anything.
 > compile errors and runtime exceptions and fixing them locally. The orchestrator boots the
 > Simulator before you launch. A change that cannot reach the screen needs no pane.
 >
-> The orchestrator hands you a ticket ID — **you own it**: move it Todo → In Progress, add a brief
-> update plus the PR link, and do **not** create a second ticket (the reviewer moves it to Done on
-> merge). Run the Quality Gates above before going idle. Load `herdr-runtime` before waiting on
-> any long-running command. **If `HERDR_ENV` is unset, ignore this entire section** — create no
-> pane and start no process.
+> Load `herdr-runtime` before waiting on any long-running command. **If `HERDR_ENV` is unset,
+> ignore this entire section** — create no pane and start no process.
