@@ -9,7 +9,13 @@ import 'fake_wall_clock.dart';
 /// [FakeMonotonicClock.advance] or [FakeWallClock.advance] directly so the
 /// divergence is visible in the test body.
 class ClockPair {
-  final FakeMonotonicClock monotonic = FakeMonotonicClock();
+  ClockPair({Duration monotonicTickPerRead = Duration.zero})
+    : monotonic = FakeMonotonicClock(tickPerRead: monotonicTickPerRead);
+
+  /// See [FakeMonotonicClock.tickPerRead]. Only the one-reading-per-frame test
+  /// sets it; everything else wants a clock that holds still.
+  final FakeMonotonicClock monotonic;
+
   final FakeWallClock wall = FakeWallClock();
 
   /// Time passes and both clocks see it.
