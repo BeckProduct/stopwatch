@@ -7,7 +7,7 @@ import 'package:flutter/services.dart';
 import 'chrono_geometry.dart';
 import 'chrono_painter.dart';
 import 'chrono_theme.dart';
-import 'pusher.dart';
+import 'chrono_button.dart';
 import 'rattrapante.dart';
 import 'run_persistence.dart';
 import 'run_session.dart';
@@ -269,29 +269,33 @@ class _ChronoScreenState extends State<ChronoScreen>
   /// The three controls, below the face. Left to right in the order they sat
   /// on the case: start above the crown, reset below it.
   Widget _controls() {
+    final running = _engine.isRunning;
+    final frozen = _split.state == SplitState.frozen;
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Pusher(
+        ChronoButton(
           travel: _startTravel,
-          label: _engine.isRunning ? 'Stop' : 'Start',
+          text: running ? 'STOP' : 'START',
+          label: running ? 'Stop' : 'Start',
           enabled: true,
           onTap: _pressStart,
         ),
-        Pusher(
+        const SizedBox(width: 12),
+        ChronoButton(
           travel: _crownTravel,
-          isCrown: true,
-          label: _split.state == SplitState.frozen
-              ? 'Rejoin split hand'
-              : 'Split',
+          text: frozen ? 'REJOIN' : 'SPLIT',
+          label: frozen ? 'Rejoin split hand' : 'Split',
           enabled: _engine.state != TimingState.idle,
           onTap: _pressCrown,
         ),
-        Pusher(
+        const SizedBox(width: 12),
+        ChronoButton(
           travel: _resetTravel,
+          text: 'RESET',
           label: 'Reset',
           // "blocked" is semantically disabled even though nothing dims.
-          enabled: !_engine.isRunning,
+          enabled: !running,
           onTap: _pressReset,
         ),
       ],
