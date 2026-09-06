@@ -47,8 +47,11 @@ class RunSession {
 
   TimingEngine _engine;
 
-  /// Exposed so a test can prove this and [engine] read the same clock.
-  @visibleForTesting
+  /// The clock this session and its [engine] both run on.
+  ///
+  /// Public because the screen needs it too: the split hand's mechanism has to
+  /// be driven from the same clock as the engine, or its animation and the
+  /// sweep hand's angle are measured against two different timelines.
   MonotonicClock get monotonic => _monotonic;
 
   /// Replaced wholesale by [restore], so read it fresh rather than holding it.

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:stopwatch/main.dart';
+import 'package:stopwatch/chrono_screen.dart';
+import 'package:stopwatch/chrono_theme.dart';
 import 'package:stopwatch/run_persistence.dart';
 import 'package:stopwatch/run_session.dart';
 import 'package:stopwatch/timing_engine.dart';
@@ -10,6 +11,7 @@ import 'support/clock_pair.dart';
 void main() {
   late ClockPair clocks;
   late MemoryRunStore store;
+  late RunSession session;
 
   /// Pumps twice: the ticker's callback calls setState, which builds on the
   /// frame after the tick.
@@ -18,44 +20,53 @@ void main() {
     await tester.pump(const Duration(milliseconds: 16));
   }
 
-  Future<void> showHarness(WidgetTester tester) async {
-    clocks = ClockPair();
-    store = MemoryRunStore();
+  /// Shows the real screen. These assert survival, so they must run against
+  /// what ships -- a harness that shares only the session proves nothing about
+  /// the screen the user has in front of them.
+  Future<void> showScreen(WidgetTester tester, {RunSession? existing}) async {
+    session =
+        existing ??
+        RunSession(
+          store: store,
+          monotonic: clocks.monotonic,
+          wall: clocks.wall,
+        );
     await tester.pumpWidget(
       MaterialApp(
-        home: EngineHarness(
-          session: RunSession(
-            store: store,
-            monotonic: clocks.monotonic,
-            wall: clocks.wall,
-          ),
-        ),
+        theme: chronoThemeData(Brightness.light),
+        home: ChronoScreen(session: session),
       ),
     );
     // initState kicks off an async restore; let it settle before asserting.
     await tester.pump();
   }
 
+  Future<void> showHarness(WidgetTester tester) async {
+    clocks = ClockPair();
+    store = MemoryRunStore();
+    await showScreen(tester);
+  }
+
+  /// The three case controls carry their state on the Semantics node, not on a
+  /// disabled button: [ID-13] is refused by the mechanism while nothing dims.
   bool enabled(WidgetTester tester, String label) {
-    final button = tester.widget<ButtonStyleButton>(
-      find.ancestor(
-        of: find.text(label),
-        // byType matches the exact runtime type, and ButtonStyleButton is
-        // abstract — FilledButton and OutlinedButton need a predicate.
-        matching: find.byWidgetPredicate((w) => w is ButtonStyleButton),
+    final node = tester.widget<Semantics>(
+      find.byWidgetPredicate(
+        (w) => w is Semantics && w.properties.label == label,
       ),
     );
-    return button.onPressed != null;
+    return node.properties.enabled ?? false;
   }
 
   testWidgets('opens idle at zero', (tester) async {
     await showHarness(tester);
 
     expect(find.text('00:00.00'), findsOneWidget);
-    expect(find.text('idle'), findsOneWidget);
+    expect(session.engine.state, TimingState.idle);
     expect(enabled(tester, 'Start'), isTrue);
-    expect(enabled(tester, 'Lap'), isFalse);
-    expect(enabled(tester, 'Reset'), isFalse);
+    // Split is dead at idle; Reset is live and simply changes nothing.
+    expect(enabled(tester, 'Split'), isFalse);
+    expect(enabled(tester, 'Reset'), isTrue);
   });
 
   testWidgets('the display advances with the clock while running', (
@@ -63,56 +74,57 @@ void main() {
   ) async {
     await showHarness(tester);
 
-    await tester.tap(find.text('Start'));
+    await tester.tap(find.bySemanticsLabel('Start'));
     await settle(tester);
     clocks.advance(const Duration(milliseconds: 1500));
     await settle(tester);
 
     // A value that exists only if the engine ran and the ticker rebuilt.
     expect(find.text('00:01.50'), findsOneWidget);
-    expect(find.text('running'), findsOneWidget);
+    expect(session.engine.state, TimingState.running);
   });
 
   testWidgets('the display holds while stopped', (tester) async {
     await showHarness(tester);
 
-    await tester.tap(find.text('Start'));
+    await tester.tap(find.bySemanticsLabel('Start'));
     await settle(tester);
     clocks.advance(const Duration(seconds: 2));
     await settle(tester);
-    await tester.tap(find.text('Stop'));
+    await tester.tap(find.bySemanticsLabel('Stop'));
     await settle(tester);
 
     clocks.advance(const Duration(minutes: 5));
     await settle(tester);
 
     expect(find.text('00:02.00'), findsOneWidget);
-    expect(find.text('stopped'), findsOneWidget);
-    expect(enabled(tester, 'Lap'), isFalse);
+    expect(session.engine.state, TimingState.stopped);
+    // Splitting a stopped chronograph is legal, and Reset is now live.
+    expect(enabled(tester, 'Split'), isTrue);
     expect(enabled(tester, 'Reset'), isTrue);
   });
 
   testWidgets('lap records a row and reset clears it', (tester) async {
     await showHarness(tester);
 
-    await tester.tap(find.text('Start'));
+    await tester.tap(find.bySemanticsLabel('Start'));
     await settle(tester);
     clocks.advance(const Duration(seconds: 3));
     await settle(tester);
-    await tester.tap(find.text('Lap'));
+    await tester.tap(find.bySemanticsLabel('Split'));
     await settle(tester);
 
-    expect(find.text('Lap 1'), findsOneWidget);
+    expect(find.text('LAP 1'), findsOneWidget);
     expect(find.text('00:03.00'), findsWidgets);
 
-    await tester.tap(find.text('Stop'));
+    await tester.tap(find.bySemanticsLabel('Stop'));
     await settle(tester);
-    await tester.tap(find.text('Reset'));
+    await tester.tap(find.bySemanticsLabel('Reset'));
     await settle(tester);
 
-    expect(find.text('Lap 1'), findsNothing);
+    expect(find.text('LAP 1'), findsNothing);
     expect(find.text('00:00.00'), findsOneWidget);
-    expect(find.text('idle'), findsOneWidget);
+    expect(session.engine.state, TimingState.idle);
   });
 
   testWidgets('a running run left by a previous launch is picked up', (
@@ -130,24 +142,15 @@ void main() {
     );
     clocks.advance(const Duration(seconds: 15)); // dead for 15s
 
-    await tester.pumpWidget(
-      MaterialApp(
-        home: EngineHarness(
-          session: RunSession(
-            store: store,
-            monotonic: clocks.monotonic,
-            wall: clocks.wall,
-          ),
-        ),
-      ),
-    );
+    await showScreen(tester);
     await settle(tester);
 
     // 30s on the dial plus the 15s the app was not running.
     expect(find.text('00:45.00'), findsOneWidget);
-    expect(find.text('running'), findsOneWidget);
-    expect(find.text('Lap 1'), findsOneWidget);
-    expect(find.text('Stop'), findsOneWidget);
+    expect(session.engine.state, TimingState.running);
+    expect(find.text('LAP 1'), findsOneWidget);
+    // The face is showing a live run, so the top pusher offers to stop it.
+    expect(find.bySemanticsLabel('Stop'), findsOneWidget);
   });
 
   testWidgets(
@@ -155,7 +158,7 @@ void main() {
     (tester) async {
       await showHarness(tester);
 
-      await tester.tap(find.text('Start'));
+      await tester.tap(find.bySemanticsLabel('Start'));
       await settle(tester);
       clocks.advance(const Duration(seconds: 4));
       await settle(tester);
@@ -168,8 +171,8 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await settle(tester);
 
+      // 4s counted, 26s the monotonic clock missed, credited on resume.
       expect(find.text('00:30.00'), findsOneWidget);
-      expect(find.text('resume correction 26000ms'), findsOneWidget);
     },
   );
 
@@ -178,7 +181,7 @@ void main() {
     (tester) async {
       await showHarness(tester);
 
-      await tester.tap(find.text('Start'));
+      await tester.tap(find.bySemanticsLabel('Start'));
       await settle(tester);
       clocks.advance(const Duration(seconds: 4));
       await settle(tester);
@@ -189,15 +192,16 @@ void main() {
       tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
       await settle(tester);
 
+      // 30s, not 56s: the monotonic clock already counted the suspension, so
+      // crediting the wall gap on top would double it.
       expect(find.text('00:30.00'), findsOneWidget);
-      expect(find.text('resume correction 0ms'), findsOneWidget);
     },
   );
 
   testWidgets('suspending records the run for a force-quit', (tester) async {
     await showHarness(tester);
 
-    await tester.tap(find.text('Start'));
+    await tester.tap(find.bySemanticsLabel('Start'));
     await settle(tester);
     clocks.advance(const Duration(seconds: 8));
 
