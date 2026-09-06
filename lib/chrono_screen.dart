@@ -141,6 +141,19 @@ class _ChronoScreenState extends State<ChronoScreen>
   Duration _lastCrownPress = const Duration(days: -1);
   static const Duration _crownDebounce = Duration(milliseconds: 120);
 
+  /// Set from the moment a crown press claims the mechanism until it has
+  /// finished writing.
+  ///
+  /// The toggle's next state is read off [_split], and the freeze branch does
+  /// not move [_split] until `_session.split()` has persisted. That await is a
+  /// disk write, not a frame -- long enough on a slow store to outlast the
+  /// debounce. A second press inside the window would read `joined` a second
+  /// time and record a second mark, and a third a third: the presses are far
+  /// enough apart that each mark advances the dial, so the engine's own guard
+  /// cannot see them for what they are. The window has to be closed here,
+  /// where the press is.
+  bool _crownInFlight = false;
+
   /// [ID-12]. Disabled at idle, swallowed while a catch-up is in flight.
   Future<void> _pressCrown() async {
     // Debounced on every tap, the disabled stub included.
@@ -156,15 +169,22 @@ class _ChronoScreenState extends State<ChronoScreen>
       return;
     }
     // "busy": enabled, press swallowed. No travel, no haptic, no state change.
-    if (_split.isCatchingUp) return;
+    // A press still working through its persist is busy too -- see
+    // [_crownInFlight].
+    if (_split.isCatchingUp || _crownInFlight) return;
 
     _travel(_crownTravel, 1);
-    if (_split.state == SplitState.joined) {
-      // The mark is recorded through the session, so a lap survives a
-      // force-quit along with the run it belongs to.
-      _split.freeze(await _session.split());
-    } else {
-      _split.release(elapsed: _engine.elapsed, reduceMotion: _reduceMotion);
+    _crownInFlight = true;
+    try {
+      if (_split.state == SplitState.joined) {
+        // The mark is recorded through the session, so a lap survives a
+        // force-quit along with the run it belongs to.
+        _split.freeze(await _session.split());
+      } else {
+        _split.release(elapsed: _engine.elapsed, reduceMotion: _reduceMotion);
+      }
+    } finally {
+      _crownInFlight = false;
     }
     if (mounted) setState(_syncTicker);
   }

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -265,4 +267,91 @@ void main() {
       handle.dispose();
     });
   });
+
+  testWidgets('crown presses inside a pending persist record one lap', (
+    tester,
+  ) async {
+    // The freeze branch does not move the split hand until its write returns,
+    // so while that write is in flight the toggle still reads "joined". The
+    // presses are far enough apart to clear the 120 ms debounce and each would
+    // mark a *different* instant, so the engine's own repeat guard cannot see
+    // them either -- this window has to be closed at the press.
+    final clocks = ClockPair();
+    final store = GatedRunStore();
+    final session = RunSession(
+      store: store,
+      monotonic: clocks.monotonic,
+      wall: clocks.wall,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: chronoThemeData(Brightness.light),
+        home: ChronoScreen(session: session),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.bySemanticsLabel('Start'));
+    await tester.pump();
+    clocks.advance(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    store.hold = true;
+    await tester.tap(find.bySemanticsLabel('Split'));
+    await tester.pump();
+
+    // Still labelled Split: the hand has not frozen, because the write has not
+    // come back. This is the window.
+    expect(find.bySemanticsLabel('Split'), findsOneWidget);
+
+    for (final gap in const [
+      Duration(milliseconds: 200),
+      Duration(milliseconds: 200),
+    ]) {
+      clocks.advance(gap);
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.tap(find.bySemanticsLabel('Split'));
+      await tester.pump();
+    }
+
+    store.release();
+    await tester.pump();
+    await tester.pump();
+
+    expect(session.engine.splits, [const Duration(seconds: 5)]);
+    expect(find.bySemanticsLabel('Rejoin split hand'), findsOneWidget);
+  });
+}
+
+/// A store whose writes can be held open, so a test can stand inside the
+/// window a real slow disk opens.
+class GatedRunStore implements RunStore {
+  RunSnapshot? _snapshot;
+  final List<Completer<void>> _pending = <Completer<void>>[];
+
+  /// While set, [write] does not complete until [release] is called.
+  bool hold = false;
+
+  @override
+  Future<RunSnapshot?> read() async => _snapshot;
+
+  @override
+  Future<void> write(RunSnapshot snapshot) async {
+    _snapshot = snapshot;
+    if (!hold) return;
+    final gate = Completer<void>();
+    _pending.add(gate);
+    return gate.future;
+  }
+
+  @override
+  Future<void> clear() async => _snapshot = null;
+
+  void release() {
+    hold = false;
+    for (final gate in _pending) {
+      gate.complete();
+    }
+    _pending.clear();
+  }
 }
