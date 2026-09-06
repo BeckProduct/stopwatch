@@ -370,7 +370,7 @@ class ChronoPainter extends CustomPainter {
     final path = Path()
       ..moveTo(Dial.centre, Dial.centre)
       ..arcTo(
-        Rect.fromCircle(center: _c, radius: 200),
+        Rect.fromCircle(center: _c, radius: Dial.plateRadius),
         (from - 90) * math.pi / 180,
         sweptDeg * math.pi / 180,
         false,
@@ -378,7 +378,11 @@ class ChronoPainter extends CustomPainter {
       ..close();
     canvas.save();
     canvas.clipPath(path);
-    canvas.drawCircle(_c, 200, _p..color = theme.rat1.withValues(alpha: 0.24));
+    canvas.drawCircle(
+      _c,
+      Dial.plateRadius,
+      _p..color = theme.rat1.withValues(alpha: 0.24),
+    );
     canvas.drawCircle(_c, 60, _p..blendMode = BlendMode.clear);
     canvas.restore();
   }
@@ -467,6 +471,12 @@ class ChronoPainter extends CustomPainter {
   void _paintGlare(Canvas canvas) {
     if (theme.glareOpacity <= 0) return;
     canvas.save();
+    // Clipped to the crystal. The case used to cover the corner of this oval
+    // that reaches past 10 o'clock; on a bare background it read as a smudge
+    // sitting outside the dial.
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: _c, radius: Dial.plateRadius)),
+    );
     canvas.translate(150, 128);
     canvas.rotate(-24 * math.pi / 180);
     canvas.drawOval(
