@@ -95,8 +95,19 @@ class _ChronoScreenState extends State<ChronoScreen>
     });
   }
 
+  /// The last crown press the mechanism accepted. A rattrapante's pincers
+  /// cannot be worked faster than this, and a double-tap that freezes and
+  /// releases in the same gesture reads as the hand not having moved at all.
+  Duration _lastCrownPress = const Duration(days: -1);
+  static const Duration _crownDebounce = Duration(milliseconds: 120);
+
   /// [ID-12]. Disabled at idle, swallowed while a catch-up is in flight.
   void _pressCrown() {
+    // Debounced on every tap, the disabled stub included.
+    final now = _clock.now;
+    if (now - _lastCrownPress < _crownDebounce) return;
+    _lastCrownPress = now;
+
     if (_engine.state == TimingState.idle) {
       // "ignored": disabled, but the head still gives a stub of travel so the
       // finger knows it was heard.

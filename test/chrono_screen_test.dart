@@ -59,6 +59,42 @@ void main() {
     expect(find.bySemanticsLabel('Rejoin split hand'), findsOneWidget);
   });
 
+  testWidgets('a second crown tap inside 120 ms is swallowed', (tester) async {
+    final clock = FakeMonotonicClock();
+    final engine = TimingEngine(clock: clock);
+    await pumpScreen(tester, clock, engine);
+
+    await tester.tap(find.bySemanticsLabel('Start'));
+    await tester.pump();
+    clock.advance(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(
+      find.bySemanticsLabel('Rejoin split hand').evaluate().isEmpty
+          ? find.bySemanticsLabel('Split')
+          : find.bySemanticsLabel('Rejoin split hand'),
+    );
+    await tester.pump();
+    expect(engine.splits, hasLength(1));
+
+    // Same gesture, 80 ms later: the pincers have not reopened.
+    clock.advance(const Duration(milliseconds: 80));
+    await tester.tap(find.bySemanticsLabel('Rejoin split hand'));
+    await tester.pump();
+    expect(
+      engine.splits,
+      hasLength(1),
+      reason: 'the release was swallowed, so the hand is still frozen',
+    );
+
+    clock.advance(const Duration(milliseconds: 200));
+    await tester.tap(find.bySemanticsLabel('Rejoin split hand'));
+    await tester.pump();
+    // Past the debounce the release is accepted: the hand is catching up, and
+    // a release records no new lap.
+    expect(find.bySemanticsLabel('Split'), findsOneWidget);
+  });
+
   testWidgets('reset is refused while running and clears once stopped', (
     tester,
   ) async {
