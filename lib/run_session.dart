@@ -92,7 +92,7 @@ class RunSession {
       clock: _monotonic,
     );
     // A run that outlived the process gets its Lock Screen mirror back.
-    await _mirror();
+    unawaited(_mirror());
   }
 
   Duration _broughtForward(RunSnapshot snapshot) {
@@ -146,19 +146,19 @@ class RunSession {
   Future<void> start() async {
     _engine.start();
     await persist();
-    await _mirror();
+    unawaited(_mirror());
   }
 
   Future<void> stop() async {
     _engine.stop();
     await persist();
-    await _mirror();
+    unawaited(_mirror());
   }
 
   Future<Duration> split() async {
     final mark = _engine.split();
     await persist();
-    await _mirror();
+    unawaited(_mirror());
     return mark;
   }
 
@@ -167,10 +167,14 @@ class RunSession {
   Future<void> reset() async {
     _engine.reset();
     await store.clear();
-    await _mirror();
+    unawaited(_mirror());
   }
 
   /// Pushes the run to the Live Activity, or ends it when there is no run.
+  ///
+  /// Always called unawaited. A transition must not wait on a platform
+  /// round-trip to a surface the app does not own: awaiting it makes the
+  /// pusher's response time hostage to ActivityKit.
   ///
   /// Called on transitions only — never per frame. The activity ticks its own
   /// numerals from the anchor it was handed, and pushing per second is

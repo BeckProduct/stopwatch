@@ -89,11 +89,13 @@ class LiveActivityBridge {
   Future<bool> _invoke(String method, [Map<String, Object?>? arguments]) async {
     try {
       return await _channel.invokeMethod<bool>(method, arguments) ?? false;
-    } on MissingPluginException {
-      // No native side: every other platform, and every widget test that has
-      // not stubbed the channel.
-      return false;
-    } on PlatformException {
+    } catch (_) {
+      // Deliberately every failure, not a chosen few. This class exists to
+      // mirror a run onto a surface the app does not own, and there is no
+      // failure of that mirror worth taking the chronograph down for:
+      // MissingPluginException off-device, PlatformException when the system
+      // refuses the activity, and a binding that was never initialised in a
+      // unit test that has no business reaching a platform channel at all.
       return false;
     }
   }
