@@ -60,6 +60,66 @@ class ChronoPainter extends CustomPainter {
 
   static const Offset _c = Offset(Dial.centre, Dial.centre);
 
+  // Sub-register centres as Offsets. [Dial] states them as records, and
+  // rebuilding an Offset from one every frame is three allocations to say
+  // something that never changes.
+  static final Offset _minutesCentre = Offset(
+    Dial.minutesCentre.dx,
+    Dial.minutesCentre.dy,
+  );
+  static final Offset _hoursCentre = Offset(
+    Dial.hoursCentre.dx,
+    Dial.hoursCentre.dy,
+  );
+  static final Offset _tenthsCentre = Offset(
+    Dial.tenthsCentre.dx,
+    Dial.tenthsCentre.dy,
+  );
+
+  /// The dial plate's bounds. Both the smear's arc and the crystal's clip are
+  /// cut from it.
+  static final Rect _plateRect = Rect.fromCircle(
+    center: _c,
+    radius: Dial.plateRadius,
+  );
+
+  /// The crystal's clip. The glare is cut to it so the oval's far corner does
+  /// not read as a smudge on the background.
+  static final Path _crystal = Path()..addOval(_plateRect);
+
+  static final Rect _glareOval = Rect.fromCenter(
+    center: Offset.zero,
+    width: 252,
+    height: 156,
+  );
+
+  // The hands, in their own rotated frame: fixed shapes, drawn every frame
+  // under a different rotation. Only the transform and the paint change.
+  static final RRect _splitStem = RRect.fromRectAndRadius(
+    const Rect.fromLTWH(-2.6, -142, 5.2, 150),
+    const Radius.circular(1.4),
+  );
+  static final RRect _splitTail = RRect.fromRectAndRadius(
+    const Rect.fromLTWH(-2.6, 0, 5.2, 34),
+    const Radius.circular(2.4),
+  );
+  static final Path _splitArrow = Path()
+    ..moveTo(0, -154)
+    ..lineTo(4.8, -138)
+    ..lineTo(-4.8, -138)
+    ..close();
+  static final RRect _sweepStem = RRect.fromRectAndRadius(
+    const Rect.fromLTWH(-1.8, -146, 3.6, 154),
+    const Radius.circular(1.2),
+  );
+  static final RRect _sweepTail = RRect.fromRectAndRadius(
+    const Rect.fromLTWH(-1.8, 0, 3.6, 36),
+    const Radius.circular(1.8),
+  );
+
+  /// Sub-register hands, by length. Two lengths across the three registers.
+  static final Map<double, RRect> _registerHands = {};
+
   Paint get _p => Paint()..isAntiAlias = true;
 
   void _paintDialPlate(Canvas canvas) {
@@ -150,31 +210,28 @@ class ChronoPainter extends CustomPainter {
   /// those seats -- and 12 gets the classic double baton.
   void _paintBatons(Canvas canvas) {
     const seats = <double>[0, 30, 60, 120, 150, 210, 240, 300, 330];
-    for (final deg in seats) {
-      if (deg == 0) {
-        _baton(canvas, deg - 4.6);
-        _baton(canvas, deg + 4.6);
-      } else {
-        _baton(canvas, deg);
-      }
-    }
-  }
-
-  void _baton(Canvas canvas, double deg) {
-    _tick(
-      canvas,
-      Dial.rIndexInner,
-      Dial.rIndexOuter,
-      deg,
-      _p
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 7.4
-        ..color = theme.ink,
-    );
+    // Both paints are the same for all ten batons, so they are built here
+    // rather than twice per baton inside the loop.
+    final ink = _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 7.4
+      ..color = theme.ink;
     final lume = _p
       ..style = PaintingStyle.stroke
       ..strokeWidth = 4.2
       ..color = theme.lume;
+    for (final deg in seats) {
+      if (deg == 0) {
+        _baton(canvas, deg - 4.6, ink, lume);
+        _baton(canvas, deg + 4.6, ink, lume);
+      } else {
+        _baton(canvas, deg, ink, lume);
+      }
+    }
+  }
+
+  void _baton(Canvas canvas, double deg, Paint ink, Paint lume) {
+    _tick(canvas, Dial.rIndexInner, Dial.rIndexOuter, deg, ink);
     if (theme.lumeGlow > 0) {
       lume.maskFilter = const MaskFilter.blur(BlurStyle.normal, 2.6);
       _tick(canvas, Dial.rIndexInner + 3, Dial.rIndexOuter - 3, deg, lume);
@@ -227,7 +284,7 @@ class ChronoPainter extends CustomPainter {
   void _paintRegisters(Canvas canvas) {
     _register(
       canvas,
-      Offset(Dial.minutesCentre.dx, Dial.minutesCentre.dy),
+      _minutesCentre,
       'MIN',
       minuteDegFor(elapsed),
       30,
@@ -238,7 +295,7 @@ class ChronoPainter extends CustomPainter {
     );
     _register(
       canvas,
-      Offset(Dial.hoursCentre.dx, Dial.hoursCentre.dy),
+      _hoursCentre,
       'HR',
       hourDegFor(elapsed),
       12,
@@ -251,7 +308,7 @@ class ChronoPainter extends CustomPainter {
     // it is the fastest thing on the dial and the one Reduce Motion is for.
     _register(
       canvas,
-      Offset(Dial.tenthsCentre.dx, Dial.tenthsCentre.dy),
+      _tenthsCentre,
       '1/10',
       tenthDegFor(quantise(elapsed, reduceMotion: reduceMotion)),
       10,
@@ -290,17 +347,19 @@ class ChronoPainter extends CustomPainter {
         ..strokeWidth = 1.2
         ..color = theme.reg1,
     );
-    // Azurage: concentric turning marks.
+    // Azurage: concentric turning marks. One paint, recoloured per ring --
+    // `drawCircle` has taken its copy by the time the next one is set.
+    final ringPaint = _p
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 0.5;
     for (final ring in const [(36.0, 0.7), (29.0, 0.55), (22.0, 0.4)]) {
       canvas.drawCircle(
         centre,
         ring.$1,
-        _p
-          ..style = PaintingStyle.stroke
-          ..strokeWidth = 0.5
-          ..color = theme.regRing.withValues(alpha: ring.$2),
+        ringPaint..color = theme.regRing.withValues(alpha: ring.$2),
       );
     }
+    final tickPaint = _p..style = PaintingStyle.stroke;
     for (var i = 0; i < tickCount; i++) {
       final deg = i * 360 / tickCount;
       final heavy = i % every == 0;
@@ -309,8 +368,7 @@ class ChronoPainter extends CustomPainter {
       canvas.drawLine(
         Offset(a.dx, a.dy),
         Offset(b.dx, b.dy),
-        _p
-          ..style = PaintingStyle.stroke
+        tickPaint
           ..strokeWidth = heavy ? 1.4 : 0.7
           ..color = theme.regHand.withValues(alpha: heavy ? 0.9 : 0.5),
       );
@@ -346,9 +404,12 @@ class ChronoPainter extends CustomPainter {
     canvas.translate(centre.dx, centre.dy);
     canvas.rotate(handDeg * math.pi / 180);
     canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(-1.4, -(handLength - 8), 2.8, handLength),
-        const Radius.circular(1.2),
+      _registerHands.putIfAbsent(
+        handLength,
+        () => RRect.fromRectAndRadius(
+          Rect.fromLTWH(-1.4, -(handLength - 8), 2.8, handLength),
+          const Radius.circular(1.2),
+        ),
       ),
       _p..color = theme.regHand,
     );
@@ -370,7 +431,7 @@ class ChronoPainter extends CustomPainter {
     final path = Path()
       ..moveTo(Dial.centre, Dial.centre)
       ..arcTo(
-        Rect.fromCircle(center: _c, radius: Dial.plateRadius),
+        _plateRect,
         (from - 90) * math.pi / 180,
         sweptDeg * math.pi / 180,
         false,
@@ -403,29 +464,10 @@ class ChronoPainter extends CustomPainter {
         const Offset(0, 34),
         [rat0, rat1],
       );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-2.6, -142, 5.2, 150),
-        const Radius.circular(1.4),
-      ),
-      paint,
-    );
-    canvas.drawPath(
-      Path()
-        ..moveTo(0, -154)
-        ..lineTo(4.8, -138)
-        ..lineTo(-4.8, -138)
-        ..close(),
-      paint,
-    );
+    canvas.drawRRect(_splitStem, paint);
+    canvas.drawPath(_splitArrow, paint);
     canvas.drawCircle(Offset.zero, 9.5, _p..color = rat1);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-2.6, 0, 5.2, 34),
-        const Radius.circular(2.4),
-      ),
-      paint,
-    );
+    canvas.drawRRect(_splitTail, paint);
     canvas.drawCircle(const Offset(0, 32), 6.5, _p..color = rat1);
     canvas.restore();
   }
@@ -444,21 +486,9 @@ class ChronoPainter extends CustomPainter {
         const Offset(0, 36),
         [theme.accent0, theme.accent1],
       );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-1.8, -146, 3.6, 154),
-        const Radius.circular(1.2),
-      ),
-      paint,
-    );
+    canvas.drawRRect(_sweepStem, paint);
     canvas.drawCircle(const Offset(0, -128), 4.2, _p..color = theme.lume);
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        const Rect.fromLTWH(-1.8, 0, 3.6, 36),
-        const Radius.circular(1.8),
-      ),
-      paint,
-    );
+    canvas.drawRRect(_sweepTail, paint);
     canvas.drawCircle(const Offset(0, 34), 7.4, _p..color = theme.accent1);
     canvas.restore();
   }
@@ -474,13 +504,11 @@ class ChronoPainter extends CustomPainter {
     // Clipped to the crystal. The case used to cover the corner of this oval
     // that reaches past 10 o'clock; on a bare background it read as a smudge
     // sitting outside the dial.
-    canvas.clipPath(
-      Path()..addOval(Rect.fromCircle(center: _c, radius: Dial.plateRadius)),
-    );
+    canvas.clipPath(_crystal);
     canvas.translate(150, 128);
     canvas.rotate(-24 * math.pi / 180);
     canvas.drawOval(
-      Rect.fromCenter(center: Offset.zero, width: 252, height: 156),
+      _glareOval,
       _p
         ..shader = ui.Gradient.linear(
           const Offset(-126, -78),
@@ -500,11 +528,45 @@ class ChronoPainter extends CustomPainter {
     canvas.drawLine(Offset(a.dx, a.dy), Offset(b.dx, b.dy), paint);
   }
 
+  /// Laid-out dial text, kept between frames.
+  ///
+  /// Every string on the dial is fixed and every style is one of a dozen, so a
+  /// [TextPainter] laid out once can be repainted for as long as the theme
+  /// holds. Building them afresh was fifteen layout passes a frame, at the
+  /// display's refresh rate, to typeset text that never changes.
+  static final Map<(String, TextStyle), TextPainter> _textCache = {};
+
+  /// A theme cross-fade walks the ink colour through a new [TextStyle] every
+  /// frame, so the cache is emptied rather than allowed to keep one entry per
+  /// intermediate colour. Two themes' worth of dial text is around thirty.
+  static const int _textCacheLimit = 64;
+
+  /// How many laid-out strings the cache is holding.
+  ///
+  /// Exposed so a test can prove the second frame lays nothing out again.
+  @visibleForTesting
+  static int get textCacheSize => _textCache.length;
+
+  /// Empties the cache, so one test's entries cannot answer for another's.
+  @visibleForTesting
+  static void clearTextCache() {
+    for (final tp in _textCache.values) {
+      tp.dispose();
+    }
+    _textCache.clear();
+  }
+
   void _text(Canvas canvas, String s, Offset centre, TextStyle style) {
-    final tp = TextPainter(
-      text: TextSpan(text: s, style: style),
-      textDirection: TextDirection.ltr,
-    )..layout();
+    final key = (s, style);
+    var tp = _textCache[key];
+    if (tp == null) {
+      if (_textCache.length >= _textCacheLimit) clearTextCache();
+      tp = TextPainter(
+        text: TextSpan(text: s, style: style),
+        textDirection: TextDirection.ltr,
+      )..layout();
+      _textCache[key] = tp;
+    }
     tp.paint(canvas, centre.translate(-tp.width / 2, -tp.height / 2));
   }
 

@@ -381,6 +381,89 @@ void main() {
     expect(session.engine.splits, [const Duration(seconds: 5)]);
     expect(find.bySemanticsLabel('Rejoin split hand'), findsOneWidget);
   });
+  group('the ticker', () {
+    // A transient frame callback is what a running [Ticker] registers, so the
+    // count is the direct answer to "is this screen asking for another frame".
+    // Nothing else on the dial registers one at rest; the ink splash under a
+    // pusher does, briefly, which is what the settling pump below is for.
+    int frameCallbacks(WidgetTester tester) =>
+        tester.binding.transientCallbackCount;
+
+    /// Long enough for a pusher's ink splash and its 90 ms travel to finish,
+    /// so what remains is the ticker and only the ticker.
+    Future<void> settleInk(WidgetTester tester) =>
+        tester.pump(const Duration(seconds: 1));
+
+    testWidgets('is stopped at idle', (tester) async {
+      final clocks = ClockPair();
+      await pumpScreen(tester, clocks);
+      await settleInk(tester);
+
+      expect(frameCallbacks(tester), 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+
+    testWidgets('runs while the chronograph runs and stops when it stops', (
+      tester,
+    ) async {
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      await tester.tap(find.bySemanticsLabel('Start'));
+      await tester.pump();
+      await settleInk(tester);
+      expect(session.engine.state, TimingState.running);
+      expect(frameCallbacks(tester), 1);
+
+      await tester.tap(find.bySemanticsLabel('Stop'));
+      await tester.pump();
+      await settleInk(tester);
+
+      expect(session.engine.state, TimingState.stopped);
+      expect(frameCallbacks(tester), 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+
+    testWidgets('keeps running for a split hand catching up on a stopped '
+        'chronograph, and stops once it lands', (tester) async {
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      await tester.tap(find.bySemanticsLabel('Start'));
+      await tester.pump();
+      clocks.advance(const Duration(seconds: 5));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      await tester.tap(find.bySemanticsLabel('Split'));
+      await tester.pump();
+      await tester.tap(find.bySemanticsLabel('Stop'));
+      await tester.pump();
+      await settleInk(tester);
+
+      // Stopped with the split hand clamped: nothing is moving.
+      expect(session.engine.state, TimingState.stopped);
+      expect(frameCallbacks(tester), 0);
+
+      // Past the crown's 120 ms debounce, which is measured on the monotonic
+      // clock rather than the frame clock.
+      clocks.advance(const Duration(milliseconds: 200));
+      await tester.tap(find.bySemanticsLabel('Rejoin split hand'));
+      await tester.pump();
+      // The frame clock runs on so the ink splash finishes, but the monotonic
+      // clock does not, so the whip cannot have landed yet. What is left
+      // asking for frames is the catch-up.
+      await settleInk(tester);
+      expect(frameCallbacks(tester), 1);
+
+      // Past the whip and its ring-down.
+      clocks.advance(const Duration(milliseconds: 400));
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.pump();
+
+      expect(frameCallbacks(tester), 0);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+    });
+  });
 }
 
 /// A store whose writes can be held open, so a test can stand inside the
