@@ -3,14 +3,11 @@
 A single-purpose stopwatch for iOS, presented as a mechanical chronograph. One screen, done to a
 high finish.
 
-**The code is the current design.** The UI spec artifact
-(`.orchestrator/stopwatch/stopwatch-spec.html`, attached to the early tickets) is **historical**: it
-still draws the cased face with a lap register, which PAT-214 replaced with an uncased dial, the
-controls below it and a tenths register. Read it for intent, never for what the screen looks like.
-`.orchestrator/stopwatch/design-notes.md` records the design conversation and is likewise a record,
-not a spec.
-
-Integration branch **`develop`**. Push, pull and fetch via the **`claude`** remote, never `origin`.
+**The code is the current design.** The UI spec artifact `stopwatch-spec.html`, attached to the
+early tickets and living in the umbrella's `.orchestrator/stopwatch/`, is **historical**: it still
+draws the cased face with a lap register, which PAT-214 replaced with an uncased dial, the controls
+below it and a tenths register. Read it for intent, never for what the screen looks like.
+`design-notes.md` sits alongside it and is likewise a record, not a spec.
 
 ---
 
@@ -40,7 +37,6 @@ Violating this is an auto-FAIL, not a code-review preference.
 - Custom painting is the bulk of this app. Keep painters pure functions of their inputs, give them
   real `shouldRepaint`, and keep per-frame allocation out of `paint`.
 - `dart format`. Idiomatic Dart. `const` wherever it holds. Avoid needless nullability.
-- Generated code (`*.g.dart`, `*.freezed.dart`) is built by `build_runner` and never hand-edited.
 - **State management is plain Flutter, no package**: `ChronoScreen` is the only `StatefulWidget`
   and holds the screen's state with `setState`, over plain injected classes — `RunSession`
   composing `TimingEngine`, the clocks and the `RunStore`, plus `RattrapanteController`, a
