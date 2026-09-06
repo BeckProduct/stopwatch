@@ -246,14 +246,94 @@ void main() {
       ]);
     });
 
-    test('two splits at the same instant give a zero lap', () {
+    // Replaces 'two splits at the same instant give a zero lap'. A zero lap is
+    // not a lap: nothing happened between the two marks, by definition of the
+    // dial not having moved.
+    test('a second split at the same instant records nothing', () {
       engine.start();
       clock.advance(const Duration(seconds: 3));
       engine.split();
       engine.split();
 
-      expect(engine.splits, const [Duration(seconds: 3), Duration(seconds: 3)]);
-      expect(engine.lapTimes, const [Duration(seconds: 3), Duration.zero]);
+      expect(engine.splits, const [Duration(seconds: 3)]);
+      expect(engine.lapTimes, const [Duration(seconds: 3)]);
+    });
+
+    test('the dropped repeat returns the mark that is still standing', () {
+      engine.start();
+      clock.advance(const Duration(seconds: 3));
+      engine.split();
+
+      // The split hand has to land somewhere whether or not a lap was written.
+      expect(engine.split(), const Duration(seconds: 3));
+    });
+
+    test('a fast split is still a split: 20 ms is kept', () {
+      // The floor is movement, not duration. Two marks a hundredth apart is
+      // the case a rattrapante exists for, and rejecting it would be the bug.
+      engine.start();
+      clock.advance(const Duration(seconds: 3));
+      engine.split();
+      clock.advance(const Duration(milliseconds: 20));
+
+      expect(engine.split(), const Duration(seconds: 3, milliseconds: 20));
+      expect(engine.lapTimes, const [
+        Duration(seconds: 3),
+        Duration(milliseconds: 20),
+      ]);
+    });
+
+    test('repeated splits while stopped record one lap, not one each', () {
+      engine.start();
+      clock.advance(
+        const Duration(minutes: 12, seconds: 16, milliseconds: 600),
+      );
+      engine.stop();
+
+      // The dial cannot move while stopped, so however long the user leans on
+      // the crown there is exactly one final lap to record.
+      for (var i = 0; i < 20; i++) {
+        clock.advance(const Duration(milliseconds: 250));
+        engine.split();
+      }
+
+      expect(engine.splits, const [
+        Duration(minutes: 12, seconds: 16, milliseconds: 600),
+      ]);
+      expect(engine.lapTimes, const [
+        Duration(minutes: 12, seconds: 16, milliseconds: 600),
+      ]);
+    });
+
+    test('a repeat is dropped and the run then carries on recording', () {
+      engine.start();
+      clock.advance(const Duration(seconds: 5));
+      engine.split();
+      engine.split(); // dropped
+      clock.advance(const Duration(seconds: 7));
+      engine.split();
+
+      expect(engine.splits, const [
+        Duration(seconds: 5),
+        Duration(seconds: 12),
+      ]);
+    });
+
+    test('a mark restored on the dial cannot be recorded again', () {
+      // A stopped run comes back with its last mark equal to the dial reading,
+      // which is exactly the shape the guard has to catch across a relaunch.
+      final restored = TimingEngine.restored(
+        state: TimingState.stopped,
+        elapsed: const Duration(seconds: 30),
+        splits: const [Duration(seconds: 12), Duration(seconds: 30)],
+        clock: clock,
+      );
+
+      expect(restored.split(), const Duration(seconds: 30));
+      expect(restored.splits, const [
+        Duration(seconds: 12),
+        Duration(seconds: 30),
+      ]);
     });
 
     test('split is rejected while idle', () {

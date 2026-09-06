@@ -254,6 +254,9 @@ void main() {
     test('the split count reaches the activity', () async {
       await session.start();
       await session.split();
+      // The dial has to move between the two, or the second mark repeats the
+      // first and the engine drops it -- a second lap needs a second instant.
+      clocks.advance(const Duration(milliseconds: 10));
       await session.split();
 
       expect(bridge.payloads.last.lapCount, 2);

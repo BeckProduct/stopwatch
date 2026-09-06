@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -76,11 +78,7 @@ void main() {
     clocks.advance(const Duration(seconds: 5));
     await tester.pump(const Duration(milliseconds: 16));
 
-    await tester.tap(
-      find.bySemanticsLabel('Rejoin split hand').evaluate().isEmpty
-          ? find.bySemanticsLabel('Split')
-          : find.bySemanticsLabel('Rejoin split hand'),
-    );
+    await tester.tap(find.bySemanticsLabel('Split'));
     await tester.pump();
     expect(engine().splits, hasLength(1));
 
@@ -100,6 +98,70 @@ void main() {
     // Past the debounce the release is accepted: the hand is catching up, and
     // a release records no new lap.
     expect(find.bySemanticsLabel('Split'), findsOneWidget);
+  });
+
+  testWidgets('a split fumbled onto the start press is swallowed', (
+    tester,
+  ) async {
+    // The debounce is the mechanism's recovery, not the crown's alone: a
+    // finger coming off `Start` and catching the crown on the way records a
+    // first lap of a few hundredths that nobody asked for.
+    final clocks = ClockPair();
+    final session = await pumpScreen(tester, clocks);
+    TimingEngine engine() => session.engine;
+
+    await tester.tap(find.bySemanticsLabel('Start'));
+    await tester.pump();
+    clocks.advance(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    await tester.tap(find.bySemanticsLabel('Split'));
+    await tester.pump();
+    expect(
+      engine().splits,
+      isEmpty,
+      reason: '20 ms after the start press the pincers have not reopened',
+    );
+
+    // Past the window the same press is honoured -- nothing here sets a
+    // minimum lap length, only a recovery after the last thing the mechanism
+    // did.
+    clocks.advance(const Duration(milliseconds: 200));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.tap(find.bySemanticsLabel('Split'));
+    await tester.pump();
+    expect(engine().splits, [const Duration(milliseconds: 220)]);
+  });
+
+  testWidgets('the idle stub does not buy a fumbled first split a pass', (
+    tester,
+  ) async {
+    // The field sequence. A crown press at idle is refused, but it is still a
+    // press: counted against the crown's own clock it burns the window, so the
+    // real split 20 ms after the start lands with the window already spent and
+    // is let through.
+    final clocks = ClockPair();
+    final session = await pumpScreen(tester, clocks);
+    TimingEngine engine() => session.engine;
+
+    await tester.tap(find.bySemanticsLabel('Split'));
+    await tester.pump();
+
+    clocks.advance(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.tap(find.bySemanticsLabel('Start'));
+    await tester.pump();
+
+    clocks.advance(const Duration(milliseconds: 20));
+    await tester.pump(const Duration(milliseconds: 16));
+    await tester.tap(find.bySemanticsLabel('Split'));
+    await tester.pump();
+
+    expect(
+      engine().splits,
+      isEmpty,
+      reason: 'the stub burned the window, the start press reopened it',
+    );
   });
 
   testWidgets(
@@ -265,4 +327,91 @@ void main() {
       handle.dispose();
     });
   });
+
+  testWidgets('crown presses inside a pending persist record one lap', (
+    tester,
+  ) async {
+    // The freeze branch does not move the split hand until its write returns,
+    // so while that write is in flight the toggle still reads "joined". The
+    // presses are far enough apart to clear the 120 ms debounce and each would
+    // mark a *different* instant, so the engine's own repeat guard cannot see
+    // them either -- this window has to be closed at the press.
+    final clocks = ClockPair();
+    final store = GatedRunStore();
+    final session = RunSession(
+      store: store,
+      monotonic: clocks.monotonic,
+      wall: clocks.wall,
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: chronoThemeData(Brightness.light),
+        home: ChronoScreen(session: session),
+      ),
+    );
+    await tester.pump();
+
+    await tester.tap(find.bySemanticsLabel('Start'));
+    await tester.pump();
+    clocks.advance(const Duration(seconds: 5));
+    await tester.pump(const Duration(milliseconds: 16));
+
+    store.hold = true;
+    await tester.tap(find.bySemanticsLabel('Split'));
+    await tester.pump();
+
+    // Still labelled Split: the hand has not frozen, because the write has not
+    // come back. This is the window.
+    expect(find.bySemanticsLabel('Split'), findsOneWidget);
+
+    for (final gap in const [
+      Duration(milliseconds: 200),
+      Duration(milliseconds: 200),
+    ]) {
+      clocks.advance(gap);
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.tap(find.bySemanticsLabel('Split'));
+      await tester.pump();
+    }
+
+    store.release();
+    await tester.pump();
+    await tester.pump();
+
+    expect(session.engine.splits, [const Duration(seconds: 5)]);
+    expect(find.bySemanticsLabel('Rejoin split hand'), findsOneWidget);
+  });
+}
+
+/// A store whose writes can be held open, so a test can stand inside the
+/// window a real slow disk opens.
+class GatedRunStore implements RunStore {
+  RunSnapshot? _snapshot;
+  final List<Completer<void>> _pending = <Completer<void>>[];
+
+  /// While set, [write] does not complete until [release] is called.
+  bool hold = false;
+
+  @override
+  Future<RunSnapshot?> read() async => _snapshot;
+
+  @override
+  Future<void> write(RunSnapshot snapshot) async {
+    _snapshot = snapshot;
+    if (!hold) return;
+    final gate = Completer<void>();
+    _pending.add(gate);
+    return gate.future;
+  }
+
+  @override
+  Future<void> clear() async => _snapshot = null;
+
+  void release() {
+    hold = false;
+    for (final gate in _pending) {
+      gate.complete();
+    }
+    _pending.clear();
+  }
 }

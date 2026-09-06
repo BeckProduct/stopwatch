@@ -31,7 +31,8 @@ enum TimingState {
 /// * [start] — [idle] or [stopped] to [running]. Rejected while running.
 /// * [stop] — [running] to [stopped]. Rejected unless running.
 /// * [reset] — [stopped] to [idle]. Rejected from any other state.
-/// * [split] — records a mark. Rejected unless running.
+/// * [split] — records a mark that advances the dial. Rejected while
+///   [idle]; a mark that repeats the last one is dropped.
 ///
 /// [start] from [stopped] resumes: it adds to the time already on the dial
 /// rather than starting over, and the interval spent stopped is not counted.
@@ -184,17 +185,31 @@ class TimingEngine {
     _banked += shortfall;
   }
 
-  /// Records the current [elapsed] as a cumulative mark and returns it.
+  /// Records the current [elapsed] as a cumulative mark and returns the mark
+  /// now standing at the top of [splits].
   ///
   /// Legal while running and while stopped. A stopped chronograph with a
   /// frozen split hand is a real state on a real watch, and it is what lets
   /// someone record a final lap after stopping; that lap equals the total. Only
   /// [idle] refuses, because there is nothing yet to mark.
+  ///
+  /// **A mark that does not advance the dial is not recorded**, and the
+  /// existing last mark comes back instead. The bar is movement, not a minimum
+  /// lap length: two marks a hundredth of a second apart are exactly what a
+  /// rattrapante is for — two competitors over one line — so a fast split is a
+  /// split. A *repeated* mark is a different thing. The dial cannot move while
+  /// stopped, so every crown press after the first records the same instant
+  /// again: not a second lap, the same lap counted twice, and unbounded for as
+  /// long as the user keeps pressing.
+  ///
+  /// The caller still gets a mark to freeze the split hand on, because the hand
+  /// belongs where the dial is whether or not a lap was written.
   Duration split() {
     if (_state == TimingState.idle) {
       throw StateError('Cannot split: nothing to mark yet (state is $_state).');
     }
     final mark = elapsed;
+    if (_splits.isNotEmpty && mark <= _splits.last) return _splits.last;
     _splits.add(mark);
     return mark;
   }
