@@ -1,5 +1,7 @@
 import 'dart:collection';
 
+import 'package:meta/meta.dart';
+
 import 'monotonic_clock.dart';
 
 /// Where the chronograph is in its cycle.
@@ -40,6 +42,35 @@ class TimingEngine {
   TimingEngine({MonotonicClock? clock})
     : _clock = clock ?? SystemMonotonicClock();
 
+  /// Rebuilds an engine part-way through a run.
+  ///
+  /// [elapsed] is the dial reading as of now, already brought forward across
+  /// whatever gap the process was not running for — this constructor does no
+  /// reconciliation of its own.
+  TimingEngine.restored({
+    required TimingState state,
+    required Duration elapsed,
+    required List<Duration> splits,
+    MonotonicClock? clock,
+  }) : _clock = clock ?? SystemMonotonicClock() {
+    if (state == TimingState.idle) {
+      throw ArgumentError.value(
+        state,
+        'state',
+        'An idle run is the absence of a run; construct a fresh engine instead',
+      );
+    }
+    if (elapsed.isNegative) {
+      throw ArgumentError.value(elapsed, 'elapsed', 'Cannot be negative');
+    }
+    _state = state;
+    _banked = elapsed;
+    _splits.addAll(splits);
+    if (state == TimingState.running) {
+      _runStartedAt = _clock.now;
+    }
+  }
+
   final MonotonicClock _clock;
 
   final List<Duration> _splits = <Duration>[];
@@ -53,6 +84,13 @@ class TimingEngine {
   /// The clock reading at which the current run began. Meaningless unless
   /// running.
   Duration _runStartedAt = Duration.zero;
+
+  /// The clock this engine reads.
+  ///
+  /// Exposed so a test can prove that a session and the engine it builds share
+  /// one clock rather than defaulting to two.
+  @visibleForTesting
+  MonotonicClock get clock => _clock;
 
   TimingState get state => _state;
 
@@ -123,6 +161,27 @@ class TimingEngine {
     _runStartedAt = Duration.zero;
     _splits.clear();
     _state = TimingState.idle;
+  }
+
+  /// Adds time that the monotonic clock failed to count while the process was
+  /// suspended.
+  ///
+  /// Called only with a measured shortfall — the amount by which the wall clock
+  /// outran the monotonic clock across a suspension. When the monotonic clock
+  /// ticks through suspension the shortfall is zero and nothing is added, so
+  /// this can never double-count the gap.
+  void absorbSuspendedGap(Duration shortfall) {
+    if (!isRunning) {
+      throw StateError('Cannot absorb a gap: not running (state is $_state).');
+    }
+    if (shortfall.isNegative) {
+      throw ArgumentError.value(
+        shortfall,
+        'shortfall',
+        'The dial cannot be wound backwards',
+      );
+    }
+    _banked += shortfall;
   }
 
   /// Records the current [elapsed] as a cumulative mark and returns it.

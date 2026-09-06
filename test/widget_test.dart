@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stopwatch/main.dart';
+import 'package:stopwatch/run_persistence.dart';
+import 'package:stopwatch/run_session.dart';
 import 'package:stopwatch/timing_engine.dart';
 
-import 'support/fake_monotonic_clock.dart';
+import 'support/clock_pair.dart';
 
 void main() {
-  late FakeMonotonicClock clock;
+  late ClockPair clocks;
+  late MemoryRunStore store;
 
   /// Pumps twice: the ticker's callback calls setState, which builds on the
   /// frame after the tick.
@@ -16,12 +19,21 @@ void main() {
   }
 
   Future<void> showHarness(WidgetTester tester) async {
-    clock = FakeMonotonicClock();
+    clocks = ClockPair();
+    store = MemoryRunStore();
     await tester.pumpWidget(
       MaterialApp(
-        home: EngineHarness(engine: TimingEngine(clock: clock)),
+        home: EngineHarness(
+          session: RunSession(
+            store: store,
+            monotonic: clocks.monotonic,
+            wall: clocks.wall,
+          ),
+        ),
       ),
     );
+    // initState kicks off an async restore; let it settle before asserting.
+    await tester.pump();
   }
 
   bool enabled(WidgetTester tester, String label) {
@@ -53,7 +65,7 @@ void main() {
 
     await tester.tap(find.text('Start'));
     await settle(tester);
-    clock.advance(const Duration(milliseconds: 1500));
+    clocks.advance(const Duration(milliseconds: 1500));
     await settle(tester);
 
     // A value that exists only if the engine ran and the ticker rebuilt.
@@ -66,12 +78,12 @@ void main() {
 
     await tester.tap(find.text('Start'));
     await settle(tester);
-    clock.advance(const Duration(seconds: 2));
+    clocks.advance(const Duration(seconds: 2));
     await settle(tester);
     await tester.tap(find.text('Stop'));
     await settle(tester);
 
-    clock.advance(const Duration(minutes: 5));
+    clocks.advance(const Duration(minutes: 5));
     await settle(tester);
 
     expect(find.text('00:02.00'), findsOneWidget);
@@ -85,7 +97,7 @@ void main() {
 
     await tester.tap(find.text('Start'));
     await settle(tester);
-    clock.advance(const Duration(seconds: 3));
+    clocks.advance(const Duration(seconds: 3));
     await settle(tester);
     await tester.tap(find.text('Lap'));
     await settle(tester);
@@ -101,5 +113,100 @@ void main() {
     expect(find.text('Lap 1'), findsNothing);
     expect(find.text('00:00.00'), findsOneWidget);
     expect(find.text('idle'), findsOneWidget);
+  });
+
+  testWidgets('a running run left by a previous launch is picked up', (
+    tester,
+  ) async {
+    clocks = ClockPair();
+    store = MemoryRunStore();
+    await store.write(
+      RunSnapshot(
+        state: TimingState.running,
+        elapsed: const Duration(seconds: 30),
+        splits: const [Duration(seconds: 12)],
+        takenAt: clocks.wall.now,
+      ),
+    );
+    clocks.advance(const Duration(seconds: 15)); // dead for 15s
+
+    await tester.pumpWidget(
+      MaterialApp(
+        home: EngineHarness(
+          session: RunSession(
+            store: store,
+            monotonic: clocks.monotonic,
+            wall: clocks.wall,
+          ),
+        ),
+      ),
+    );
+    await settle(tester);
+
+    // 30s on the dial plus the 15s the app was not running.
+    expect(find.text('00:45.00'), findsOneWidget);
+    expect(find.text('running'), findsOneWidget);
+    expect(find.text('Lap 1'), findsOneWidget);
+    expect(find.text('Stop'), findsOneWidget);
+  });
+
+  testWidgets(
+    'a suspension the monotonic clock missed is corrected on resume',
+    (tester) async {
+      await showHarness(tester);
+
+      await tester.tap(find.text('Start'));
+      await settle(tester);
+      clocks.advance(const Duration(seconds: 4));
+      await settle(tester);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      clocks.advanceWallOnly(
+        const Duration(seconds: 26),
+      ); // asleep, mono halted
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await settle(tester);
+
+      expect(find.text('00:30.00'), findsOneWidget);
+      expect(find.text('resume correction 26000ms'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'a suspension the monotonic clock covered is not double-counted',
+    (tester) async {
+      await showHarness(tester);
+
+      await tester.tap(find.text('Start'));
+      await settle(tester);
+      clocks.advance(const Duration(seconds: 4));
+      await settle(tester);
+
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+      await tester.pump();
+      clocks.advance(const Duration(seconds: 26)); // both clocks saw it
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await settle(tester);
+
+      expect(find.text('00:30.00'), findsOneWidget);
+      expect(find.text('resume correction 0ms'), findsOneWidget);
+    },
+  );
+
+  testWidgets('suspending records the run for a force-quit', (tester) async {
+    await showHarness(tester);
+
+    await tester.tap(find.text('Start'));
+    await settle(tester);
+    clocks.advance(const Duration(seconds: 8));
+
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+
+    final recorded = await store.read();
+    expect(recorded, isNotNull);
+    expect(recorded!.state, TimingState.running);
+    expect(recorded.elapsed, const Duration(seconds: 8));
   });
 }
