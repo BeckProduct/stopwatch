@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stopwatch/chrono_painter.dart';
 import 'package:stopwatch/chrono_screen.dart';
@@ -161,5 +162,107 @@ void main() {
 
     expect(engine().state, TimingState.idle);
     expect(find.text('00:00.00'), findsOneWidget);
+  });
+
+  /// Every control has to be reachable by assistive tech, and a pointer tap
+  /// proves nothing about that: it lands on the button underneath and works
+  /// whether or not the semantics node carries an action at all. These drive
+  /// the node itself, which is what VoiceOver does.
+  group('activation through the semantics tree', () {
+    testWidgets('every control carries a tap action', (tester) async {
+      final handle = tester.ensureSemantics();
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      // Split and reset both need a state where they are live, so the three
+      // are checked where each one is enabled.
+      await tester.tap(find.bySemanticsLabel('Start'));
+      await tester.pump();
+      clocks.advance(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.tap(find.bySemanticsLabel('Stop'));
+      await tester.pump();
+
+      for (final label in ['Start', 'Split', 'Reset']) {
+        expect(
+          tester
+              .getSemantics(find.bySemanticsLabel(label))
+              .getSemanticsData()
+              .hasAction(SemanticsAction.tap),
+          isTrue,
+          reason: '$label cannot be activated by VoiceOver',
+        );
+      }
+
+      expect(session.engine.state, TimingState.stopped);
+      handle.dispose();
+    });
+
+    testWidgets('start runs the chronograph', (tester) async {
+      final handle = tester.ensureSemantics();
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Start'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      expect(session.engine.state, TimingState.running);
+      handle.dispose();
+    });
+
+    testWidgets('split records a lap', (tester) async {
+      final handle = tester.ensureSemantics();
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Start'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+      clocks.advance(const Duration(seconds: 4));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Split'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      expect(session.engine.splits, [const Duration(seconds: 4)]);
+      handle.dispose();
+    });
+
+    testWidgets('reset clears a stopped run', (tester) async {
+      final handle = tester.ensureSemantics();
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Start'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+      clocks.advance(const Duration(seconds: 3));
+      await tester.pump(const Duration(milliseconds: 16));
+      tester.semantics.performAction(
+        find.semantics.byLabel('Stop'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Reset'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      expect(session.engine.state, TimingState.idle);
+      expect(find.text('00:00.00'), findsOneWidget);
+      handle.dispose();
+    });
   });
 }

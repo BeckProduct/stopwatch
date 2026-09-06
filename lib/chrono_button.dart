@@ -9,6 +9,9 @@ import 'chrono_theme.dart';
 /// button that swallowed the tap at the widget layer would lose that. What
 /// [enabled] drives is the semantics node -- VoiceOver hears a disabled
 /// control while nothing on screen dims.
+///
+/// Both routes in reach the same callback: the pointer through the button, and
+/// assistive tech through the semantics action on the node.
 class ChronoButton extends StatelessWidget {
   const ChronoButton({
     super.key,
@@ -43,6 +46,11 @@ class ChronoButton extends StatelessWidget {
       enabled: enabled,
       // Busy stays enabled: the press is swallowed, not refused.
       label: label,
+      // The node carries the action itself. [ExcludeSemantics] below hides the
+      // button's own, so without this the control is reachable by VoiceOver
+      // and dead to it -- and no pointer test can see that, because a pointer
+      // lands on the button underneath either way.
+      onTap: onTap,
       child: ExcludeSemantics(
         child: SizedBox(
           width: width,
