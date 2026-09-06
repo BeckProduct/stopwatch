@@ -1,7 +1,7 @@
 import 'dart:math' as math;
 
-/// Dial geometry, in the spec's painter units: a 400x400 dial with its centre
-/// at (200, 200), drawn inside the `viewBox="-26 -36 462 472"` case box.
+/// Dial geometry, in the spec's painter units: a 314-unit dial plate centred
+/// at (200, 200), inside a square box just wide enough to hold its rim.
 ///
 /// Pure functions of elapsed time. Nothing here reads a clock, so every value
 /// rendered in one frame can be derived from a single elapsed reading.
@@ -9,8 +9,12 @@ class Dial {
   const Dial._();
 
   static const double centre = 200;
-  static const double caseRadius = 200;
   static const double plateRadius = 157;
+
+  /// The rim. With the case gone nothing else frames the dial, so this ring
+  /// carries the weight the bezel used to and is drawn, not implied.
+  static const double rimInner = 157;
+  static const double rimOuter = 164;
 
   static const double rFifthOuter = 156;
   static const double rFifthInner = 152;
@@ -19,18 +23,18 @@ class Dial {
   static const double rMin5Inner = 140;
   static const double rIndexOuter = 134;
   static const double rIndexInner = 112;
-  static const double rTachy = 172;
 
-  /// The painter's own coordinate box, before scaling to the widget.
-  static const double boxLeft = -26;
-  static const double boxTop = -36;
-  static const double boxWidth = 462;
-  static const double boxHeight = 472;
+  /// The painter's own coordinate box, before scaling to the widget. Two
+  /// units of air outside the rim so the outer hairline is not clipped.
+  static const double boxLeft = 34;
+  static const double boxTop = 34;
+  static const double boxWidth = 332;
+  static const double boxHeight = 332;
 
   /// Sub-register centres.
   static const minutesCentre = (dx: 130.0, dy: 200.0);
   static const hoursCentre = (dx: 270.0, dy: 200.0);
-  static const lapsCentre = (dx: 200.0, dy: 270.0);
+  static const tenthsCentre = (dx: 200.0, dy: 270.0);
   static const double registerRadius = 42;
 }
 
@@ -57,8 +61,12 @@ double minuteDegFor(Duration elapsed) =>
 double hourDegFor(Duration elapsed) =>
     (elapsed.inMilliseconds % 43200000) / 43200000 * 360;
 
-/// The lap register: one revolution per 12 laps.
-double lapDegFor(int lapCount) => (lapCount % 12) / 12 * 360;
+/// The tenths register: one revolution a second, ten divisions.
+///
+/// The fastest hand on the dial, so it is the one Reduce Motion has to reach:
+/// callers pass elapsed through [quantise] exactly as the sweep hand does.
+double tenthDegFor(Duration elapsed) =>
+    (elapsed.inMilliseconds % 1000) / 1000 * 360;
 
 /// The shortest forward rotation from [fromDeg] to [toDeg], in [0, 360).
 ///
