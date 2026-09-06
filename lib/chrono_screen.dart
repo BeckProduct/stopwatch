@@ -123,8 +123,11 @@ class _ChronoScreenState extends State<ChronoScreen>
 
   bool get _reduceMotion => MediaQuery.disableAnimationsOf(context);
 
-  /// [ID-11]. Always enabled, always full travel.
+  /// [ID-11]. Always enabled, always full travel. Never debounced -- the
+  /// mechanism must always answer this one -- but it stamps [_lastAction], so
+  /// the crown's pincers are shut for the window after a start or a stop.
   Future<void> _pressStart() async {
+    _lastAction = _session.monotonic.now;
     HapticFeedback.mediumImpact();
     _travel(_startTravel, 1);
     if (_engine.isRunning) {
@@ -135,10 +138,18 @@ class _ChronoScreenState extends State<ChronoScreen>
     if (mounted) setState(_syncTicker);
   }
 
-  /// The last crown press the mechanism accepted. A rattrapante's pincers
-  /// cannot be worked faster than this, and a double-tap that freezes and
-  /// releases in the same gesture reads as the hand not having moved at all.
-  Duration _lastCrownPress = const Duration(days: -1);
+  /// The last instant the mechanism did anything -- a start, a stop, or a
+  /// crown press it accepted. One instant for all of them, because a finger
+  /// coming off the start pusher is as much a reason to hold the pincers shut
+  /// as a finger coming off the crown: a debounce that counts only from the
+  /// last crown press is measuring against nothing on the first press of a
+  /// run, and a `Start` immediately followed by a fumbled `Split` records a
+  /// 20 ms first lap the wearer never asked for.
+  ///
+  /// The window is the pincers' recovery, not a minimum lap. Two marks a
+  /// hundredth apart are the whole point of a rattrapante and stay legal --
+  /// what is refused is a second press inside the recovery of the last one.
+  Duration _lastAction = const Duration(days: -1);
   static const Duration _crownDebounce = Duration(milliseconds: 120);
 
   /// Set from the moment a crown press claims the mechanism until it has
@@ -156,10 +167,12 @@ class _ChronoScreenState extends State<ChronoScreen>
 
   /// [ID-12]. Disabled at idle, swallowed while a catch-up is in flight.
   Future<void> _pressCrown() async {
-    // Debounced on every tap, the disabled stub included.
+    // Debounced on every tap, the disabled stub included -- the stub burns
+    // the window too, or a press that lands at idle leaves the next one
+    // measuring against nothing.
     final now = _session.monotonic.now;
-    if (now - _lastCrownPress < _crownDebounce) return;
-    _lastCrownPress = now;
+    if (now - _lastAction < _crownDebounce) return;
+    _lastAction = now;
 
     if (_engine.state == TimingState.idle) {
       // "ignored": disabled, but the head still gives a stub of travel so the
