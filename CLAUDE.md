@@ -1,10 +1,13 @@
 # stopwatch — Flutter / iOS
 
 A single-purpose stopwatch for iOS, presented as a mechanical chronograph. One screen, done to a
-high finish. Design decisions live in the umbrella's `.orchestrator/stopwatch/design-notes.md` and
-in the UI spec artifact attached to each ticket — **not** in this file.
+high finish.
 
-Integration branch **`develop`**. Push, pull and fetch via the **`claude`** remote, never `origin`.
+**The code is the current design.** The UI spec artifact `stopwatch-spec.html`, in the umbrella's
+`.orchestrator/stopwatch/` and cited by path in the early tickets, is **historical**: it still draws
+the cased face with a lap register, which PAT-214 replaced with an uncased dial, the controls below
+it and a tenths register. Read it for intent, never for what the screen looks like. `design-notes.md`
+sits alongside it and is likewise a record, not a spec.
 
 ---
 
@@ -34,18 +37,20 @@ Violating this is an auto-FAIL, not a code-review preference.
 - Custom painting is the bulk of this app. Keep painters pure functions of their inputs, give them
   real `shouldRepaint`, and keep per-frame allocation out of `paint`.
 - `dart format`. Idiomatic Dart. `const` wherever it holds. Avoid needless nullability.
-- Generated code (`*.g.dart`, `*.freezed.dart`) is built by `build_runner` and never hand-edited.
-
-State management is **not yet decided**; propose it on the ticket that first needs it rather than
-introducing one silently.
+- **State management is plain Flutter, no package**: `ChronoScreen` is the only `StatefulWidget`
+  and holds the screen's state with `setState`, over plain injected classes — `RunSession`
+  composing `TimingEngine`, the clocks and the `RunStore`, plus `RattrapanteController`, a
+  `ChangeNotifier` for the split hand. Introducing a package needs a ticket and a reason this
+  cannot carry the case.
 
 ---
 
 ## iOS specifics
 
 - **iOS only.** No Android, no web, no desktop. Do not add platform folders.
-- The Live Activity / Dynamic Island is a **Swift widget extension** under `ios/`. It is the only
-  non-Dart code in the project.
+- The Live Activity / Dynamic Island is a **Swift widget extension**, `ios/ChronoLiveActivity/`.
+  It talks to Dart through `ios/Runner/LiveActivityBridge.swift`, which compiles into the Runner
+  target alongside the usual `AppDelegate`/`SceneDelegate` and the bridging header.
 - Any change to `ios/Runner.xcodeproj`, signing, entitlements or `Info.plist` is broad-impact:
   say what it affects before making it.
 - Simulator target: **iPhone 17 Pro**.
@@ -57,8 +62,6 @@ introducing one silently.
 - Timing and lap logic → unit tests, driven by an injectable clock. A test that needs `sleep` is
   the wrong test.
 - Widget behaviour (pusher enablement, state transitions, lap stack) → widget tests.
-- **Verify by falsification.** A test that still passes when you revert the change it covers is
-  not a test. Say so if you could not falsify one.
 - Painters are exempt from pixel assertions; test the geometry functions they call instead.
 
 ---
@@ -67,28 +70,28 @@ introducing one silently.
 
 - `flutter analyze` — clean, not "clean except".
 - `flutter test`
-- `flutter run -d "iPhone 17 Pro"` builds and launches without exceptions.
 
-**A screenshot is not verification of UI behaviour.** Justin drives the app by hand and is the only
-source of a UI verdict. Report what you ran, and report animation and feel as *unverified*.
+Those two are the gates. `flutter run -d "iPhone 17 Pro"` is **optional** — reach for it when you
+need the simulator to diagnose something, not to prove the branch builds.
+
+**The UI verdict is Justin's.** He drives the app by hand and is the only source of one; a
+screenshot is not verification of animation, feel or gesture behaviour. Report what you ran and
+report those as *unverified*. An agent spending a build to report that the app launched has told
+nobody anything.
 
 ---
 
 ## Herdr orchestration (gated)
 
-> **Only if `HERDR_ENV=1` AND you were launched with an implementation brief naming a ticket.**
-> The `HERDR_ENV` check alone is not sufficient — the orchestrator satisfies it too, and the
-> orchestrator guardrails forbid the orchestrator from implementing. No brief → this section is
-> not for you.
+> **Only if `HERDR_ENV=1` AND you hold an implementation brief naming a ticket.** The orchestrator
+> satisfies `HERDR_ENV` too and is forbidden from implementing. No brief → not for you.
 >
-> Ensure your runtime side pane exists (create it if missing, labeled `flutter-run`) and keep
-> `flutter run -d "iPhone 17 Pro"` running there; watch it for compile errors and runtime
-> exceptions and fix them locally. The orchestrator boots the Simulator before you launch. Cut
-> your `feature/*` branch fresh from the latest `develop` (fetch first), push it to the `claude`
-> remote with an explicit refspec, and open a PR with
-> `gh pr create --repo BeckProduct/stopwatch --base develop --reviewer reviewbeck`. The
-> orchestrator hands you a ticket ID — **you own it**: move it Todo → In Progress, add a brief
-> update plus the PR link, and do **not** create a second ticket (the reviewer moves it to Done on
-> merge). Run the Quality Gates above before going idle. Load `herdr-runtime` before waiting on
-> any long-running command. **If `HERDR_ENV` is unset, ignore this entire section** — create no
-> pane and start no process.
+> Branching, pushing and opening the PR are `git-conventions`' — load it and follow it.
+>
+> Work that needs the simulator: ensure your runtime side pane exists (create it if missing,
+> labeled `flutter-run`) and keep `flutter run -d "iPhone 17 Pro"` running there, watching for
+> compile errors and runtime exceptions and fixing them locally. The orchestrator boots the
+> Simulator before you launch. A change that cannot reach the screen needs no pane.
+>
+> Load `herdr-runtime` before waiting on any long-running command. **If `HERDR_ENV` is unset,
+> ignore this entire section** — create no pane and start no process.
