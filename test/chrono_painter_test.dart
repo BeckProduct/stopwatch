@@ -47,26 +47,34 @@ void main() {
     expect(ChronoPainter.textCacheSize, afterFirstFrame);
   });
 
-  test('a change of theme does not grow the cache without bound', () {
-    // Every intermediate colour of a theme cross-fade is a distinct TextStyle.
-    // The cache is emptied rather than allowed to keep all of them.
+  test('the cache holds one entry per string per theme, and no more', () {
     final light = chronoThemeData(Brightness.light).extension<ChronoTheme>()!;
     final dark = chronoThemeData(Brightness.dark).extension<ChronoTheme>()!;
+
+    ChronoPainter painterFor(ChronoTheme theme, int i) => ChronoPainter(
+      theme: theme,
+      elapsed: Duration(milliseconds: i * 17),
+      splitDeg: (i * 7) % 360,
+      splitState: SplitState.joined,
+      reduceMotion: false,
+      smearFromDeg: null,
+      splitFade: 1,
+    );
+
+    paintOnce(painterFor(light, 0));
+    final perTheme = ChronoPainter.textCacheSize;
+    expect(perTheme, greaterThan(10));
+
+    // Sixty frames of each theme, at sixty elapsed values, plus every step of
+    // a light-to-dark transition. Nothing the app can do keys a third theme's
+    // worth of entries: no dial style carries an animated value, and
+    // ChronoTheme.lerp snaps rather than interpolating. Were either to change,
+    // this count would climb with the frame number instead of standing still.
     for (var i = 0; i <= 60; i++) {
-      final theme = light.lerp(dark, i / 60);
-      paintOnce(
-        ChronoPainter(
-          theme: theme,
-          elapsed: Duration(milliseconds: i * 17),
-          splitDeg: 0,
-          splitState: SplitState.joined,
-          reduceMotion: false,
-          smearFromDeg: null,
-          splitFade: 1,
-        ),
-      );
+      paintOnce(painterFor(light, i));
+      paintOnce(painterFor(dark, i));
+      paintOnce(painterFor(light.lerp(dark, i / 60), i));
     }
-    expect(ChronoPainter.textCacheSize, greaterThan(0));
-    expect(ChronoPainter.textCacheSize, lessThanOrEqualTo(64));
+    expect(ChronoPainter.textCacheSize, perTheme * 2);
   });
 }

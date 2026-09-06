@@ -394,7 +394,7 @@ void main() {
     Future<void> settleInk(WidgetTester tester) =>
         tester.pump(const Duration(seconds: 1));
 
-    testWidgets('is stopped at idle', (tester) async {
+    testWidgets('never starts while the chronograph is idle', (tester) async {
       final clocks = ClockPair();
       await pumpScreen(tester, clocks);
       await settleInk(tester);

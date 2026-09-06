@@ -534,12 +534,12 @@ class ChronoPainter extends CustomPainter {
   /// [TextPainter] laid out once can be repainted for as long as the theme
   /// holds. Building them afresh was fifteen layout passes a frame, at the
   /// display's refresh rate, to typeset text that never changes.
+  ///
+  /// The key set is bounded without an eviction policy: no style here carries
+  /// an animated value, and [ChronoTheme.lerp] snaps between the two const
+  /// themes rather than interpolating, so the whole app can only ever produce
+  /// one entry per string per theme.
   static final Map<(String, TextStyle), TextPainter> _textCache = {};
-
-  /// A theme cross-fade walks the ink colour through a new [TextStyle] every
-  /// frame, so the cache is emptied rather than allowed to keep one entry per
-  /// intermediate colour. Two themes' worth of dial text is around thirty.
-  static const int _textCacheLimit = 64;
 
   /// How many laid-out strings the cache is holding.
   ///
@@ -560,7 +560,6 @@ class ChronoPainter extends CustomPainter {
     final key = (s, style);
     var tp = _textCache[key];
     if (tp == null) {
-      if (_textCache.length >= _textCacheLimit) clearTextCache();
       tp = TextPainter(
         text: TextSpan(text: s, style: style),
         textDirection: TextDirection.ltr,
