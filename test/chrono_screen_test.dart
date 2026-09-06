@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:stopwatch/chrono_geometry.dart';
+import 'package:stopwatch/chrono_painter.dart';
 import 'package:stopwatch/chrono_screen.dart';
 import 'package:stopwatch/chrono_theme.dart';
 import 'package:stopwatch/timing_engine.dart';
@@ -93,6 +95,39 @@ void main() {
     // Past the debounce the release is accepted: the hand is catching up, and
     // a release records no new lap.
     expect(find.bySemanticsLabel('Split'), findsOneWidget);
+  });
+
+  testWidgets('a tap on the painted pusher head reaches the control', (
+    tester,
+  ) async {
+    final clock = FakeMonotonicClock();
+    final engine = TimingEngine(clock: clock);
+    await pumpScreen(tester, clock, engine);
+
+    // Taken from where the case is actually painted rather than from the
+    // widget's own placement arithmetic. A regression guard: it pins the
+    // targets to the painted heads so a change to either has to move both.
+    final canvas = tester.getRect(
+      find.byWidgetPredicate(
+        (w) => w is CustomPaint && w.painter is ChronoPainter,
+      ),
+    );
+    final scale = canvas.width / Dial.boxWidth;
+    const headRadius = 220.0;
+    final head = polar(Dial.centre, Dial.centre, headRadius, 60);
+    final target = Offset(
+      canvas.left + (head.dx - Dial.boxLeft) * scale,
+      canvas.top + (head.dy - Dial.boxTop) * scale,
+    );
+
+    await tester.tapAt(target);
+    await tester.pump();
+
+    expect(
+      engine.state,
+      TimingState.running,
+      reason: 'the top pusher answers where it is drawn',
+    );
   });
 
   testWidgets('reset is refused while running and clears once stopped', (

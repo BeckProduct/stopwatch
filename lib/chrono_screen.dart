@@ -271,14 +271,14 @@ class _ChronoScreenState extends State<ChronoScreen>
           // flank; the painted heads move, the targets do not.
           _hit(
             side: side,
-            top: 0.16,
+            pusherDeg: 60,
             label: _engine.isRunning ? 'Stop' : 'Start',
             enabled: true,
             onTap: _pressStart,
           ),
           _hit(
             side: side,
-            top: 0.42,
+            pusherDeg: 90,
             label: _split.state == SplitState.frozen
                 ? 'Rejoin split hand'
                 : 'Split',
@@ -288,7 +288,7 @@ class _ChronoScreenState extends State<ChronoScreen>
           ),
           _hit(
             side: side,
-            top: 0.66,
+            pusherDeg: 120,
             label: 'Reset',
             // "blocked" is semantically disabled even though nothing dims.
             enabled: !_engine.isRunning,
@@ -299,17 +299,29 @@ class _ChronoScreenState extends State<ChronoScreen>
     );
   }
 
+  /// A control's hit target, placed on the pusher it belongs to.
+  ///
+  /// Derived from the same angle the painter draws the head at rather than a
+  /// fraction of the frame: the case is drawn in the spec's 462-unit box and
+  /// scaled, so any fraction of the widget's own width lands somewhere else.
   Widget _hit({
     required double side,
-    required double top,
+    required double pusherDeg,
     required String label,
     required bool enabled,
     required VoidCallback onTap,
     bool busy = false,
   }) {
+    const headRadius = 220.0;
+    final scale = side / Dial.boxWidth;
+    final head = polar(Dial.centre, Dial.centre, headRadius, pusherDeg);
+    // Painter coordinates are offset by the box origin before scaling.
+    final centreX = (head.dx - Dial.boxLeft) * scale;
+    final centreY = (head.dy - Dial.boxTop) * scale;
+
     return Positioned(
-      right: 0,
-      top: top * side,
+      left: centreX - 26,
+      top: centreY - 28,
       child: Semantics(
         button: true,
         enabled: enabled,
