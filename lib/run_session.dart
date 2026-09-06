@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/widgets.dart';
 
+import 'live_activity.dart';
 import 'monotonic_clock.dart';
 import 'run_persistence.dart';
 import 'timing_engine.dart';
@@ -32,18 +35,29 @@ class RunSession {
     required RunStore store,
     MonotonicClock? monotonic,
     WallClock wall = const SystemWallClock(),
-  }) => RunSession._(store, monotonic ?? SystemMonotonicClock(), wall);
+    LiveActivityBridge? liveActivity,
+  }) => RunSession._(
+    store,
+    monotonic ?? SystemMonotonicClock(),
+    wall,
+    liveActivity ?? LiveActivityBridge(),
+  );
 
   /// Takes the resolved clock, so the session and the engine it builds cannot
   /// end up on two different ones — which is what happens if the nullable is
   /// forwarded and each side defaults it separately.
-  RunSession._(this.store, MonotonicClock monotonic, this.wall)
-    : _monotonic = monotonic,
+  RunSession._(
+    this.store,
+    MonotonicClock monotonic,
+    this.wall,
+    this._liveActivity,
+  ) : _monotonic = monotonic,
       _engine = TimingEngine(clock: monotonic);
 
   final RunStore store;
   final WallClock wall;
   final MonotonicClock _monotonic;
+  final LiveActivityBridge _liveActivity;
 
   TimingEngine _engine;
 
@@ -77,6 +91,8 @@ class RunSession {
       splits: snapshot.splits,
       clock: _monotonic,
     );
+    // A run that outlived the process gets its Lock Screen mirror back.
+    unawaited(_mirror());
   }
 
   Duration _broughtForward(RunSnapshot snapshot) {
@@ -121,22 +137,28 @@ class RunSession {
     if (shortfall <= Duration.zero) return Duration.zero;
 
     _engine.absorbSuspendedGap(shortfall);
+    // The dial just jumped by the shortfall, so the activity's anchor is stale.
+    // Re-anchor, or the Lock Screen and the face disagree by exactly the gap.
+    unawaited(_mirror());
     return shortfall;
   }
 
   Future<void> start() async {
     _engine.start();
     await persist();
+    unawaited(_mirror());
   }
 
   Future<void> stop() async {
     _engine.stop();
     await persist();
+    unawaited(_mirror());
   }
 
   Future<Duration> split() async {
     final mark = _engine.split();
     await persist();
+    unawaited(_mirror());
     return mark;
   }
 
@@ -145,7 +167,44 @@ class RunSession {
   Future<void> reset() async {
     _engine.reset();
     await store.clear();
+    unawaited(_mirror());
   }
+
+  /// Pushes the run to the Live Activity, or ends it when there is no run.
+  ///
+  /// Always called unawaited. A transition must not wait on a platform
+  /// round-trip to a surface the app does not own: awaiting it makes the
+  /// pusher's response time hostage to ActivityKit.
+  ///
+  /// Called on transitions only — never per frame. The activity ticks its own
+  /// numerals from the anchor it was handed, and pushing per second is
+  /// rate-limited by the system and costs real battery.
+  ///
+  /// The mirror failing is not the run failing: every call answers `false`
+  /// rather than throwing, and nothing here reads the answer.
+  Future<void> _mirror() async {
+    if (_engine.state == TimingState.idle) {
+      _activityShowing = false;
+      await _liveActivity.end();
+      return;
+    }
+    final payload = LiveActivityPayload.forRun(
+      elapsed: _engine.elapsed,
+      isRunning: _engine.isRunning,
+      lapCount: _engine.splits.length,
+      now: wall.now,
+    );
+    if (_activityShowing) {
+      await _liveActivity.update(payload);
+    } else {
+      _activityShowing = true;
+      await _liveActivity.start(payload);
+    }
+  }
+
+  /// Whether an activity is up, so a transition knows to update rather than
+  /// request a second one.
+  bool _activityShowing = false;
 
   /// Writes the current run, or clears the record if there is no run.
   ///
