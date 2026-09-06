@@ -4,34 +4,39 @@ import 'package:stopwatch/chrono_geometry.dart';
 import 'package:stopwatch/chrono_painter.dart';
 import 'package:stopwatch/chrono_screen.dart';
 import 'package:stopwatch/chrono_theme.dart';
+import 'package:stopwatch/run_persistence.dart';
+import 'package:stopwatch/run_session.dart';
 import 'package:stopwatch/timing_engine.dart';
 
-import 'support/fake_monotonic_clock.dart';
+import 'support/clock_pair.dart';
 
 void main() {
-  Future<void> pumpScreen(
-    WidgetTester tester,
-    FakeMonotonicClock clock,
-    TimingEngine engine,
-  ) {
-    return tester.pumpWidget(
+  Future<RunSession> pumpScreen(WidgetTester tester, ClockPair clocks) async {
+    final session = RunSession(
+      store: MemoryRunStore(),
+      monotonic: clocks.monotonic,
+      wall: clocks.wall,
+    );
+    await tester.pumpWidget(
       MaterialApp(
         theme: chronoThemeData(Brightness.light),
-        home: ChronoScreen(engine: engine, clock: clock),
+        home: ChronoScreen(session: session),
       ),
     );
+    // initState kicks off an async restore; let it settle before asserting.
+    await tester.pump();
+    return session;
   }
 
   testWidgets('the readout tracks the injected clock', (tester) async {
-    final clock = FakeMonotonicClock();
-    final engine = TimingEngine(clock: clock);
-    await pumpScreen(tester, clock, engine);
+    final clocks = ClockPair();
+    await pumpScreen(tester, clocks);
 
     expect(find.text('00:00.00'), findsOneWidget);
 
     await tester.tap(find.bySemanticsLabel('Start'));
     await tester.pump();
-    clock.advance(const Duration(milliseconds: 1230));
+    clocks.advance(const Duration(milliseconds: 1230));
     await tester.pump(const Duration(milliseconds: 16));
 
     expect(find.text('00:01.23'), findsOneWidget);
@@ -40,35 +45,35 @@ void main() {
   testWidgets('the split pusher is disabled at idle and enabled once running', (
     tester,
   ) async {
-    final clock = FakeMonotonicClock();
-    final engine = TimingEngine(clock: clock);
-    await pumpScreen(tester, clock, engine);
+    final clocks = ClockPair();
+    final session = await pumpScreen(tester, clocks);
+    TimingEngine engine() => session.engine;
 
     // "ignored" at idle: disabled, and the press records no lap.
     await tester.tap(find.bySemanticsLabel('Split'));
     await tester.pump();
-    expect(engine.splits, isEmpty);
+    expect(engine().splits, isEmpty);
 
     await tester.tap(find.bySemanticsLabel('Start'));
     await tester.pump();
-    clock.advance(const Duration(seconds: 5));
+    clocks.advance(const Duration(seconds: 5));
     await tester.pump(const Duration(milliseconds: 16));
 
     await tester.tap(find.bySemanticsLabel('Split'));
     await tester.pump();
-    expect(engine.splits, [const Duration(seconds: 5)]);
+    expect(engine().splits, [const Duration(seconds: 5)]);
     // The label flips only on split state, never on run state.
     expect(find.bySemanticsLabel('Rejoin split hand'), findsOneWidget);
   });
 
   testWidgets('a second crown tap inside 120 ms is swallowed', (tester) async {
-    final clock = FakeMonotonicClock();
-    final engine = TimingEngine(clock: clock);
-    await pumpScreen(tester, clock, engine);
+    final clocks = ClockPair();
+    final session = await pumpScreen(tester, clocks);
+    TimingEngine engine() => session.engine;
 
     await tester.tap(find.bySemanticsLabel('Start'));
     await tester.pump();
-    clock.advance(const Duration(seconds: 5));
+    clocks.advance(const Duration(seconds: 5));
     await tester.pump(const Duration(milliseconds: 16));
 
     await tester.tap(
@@ -77,19 +82,19 @@ void main() {
           : find.bySemanticsLabel('Rejoin split hand'),
     );
     await tester.pump();
-    expect(engine.splits, hasLength(1));
+    expect(engine().splits, hasLength(1));
 
     // Same gesture, 80 ms later: the pincers have not reopened.
-    clock.advance(const Duration(milliseconds: 80));
+    clocks.advance(const Duration(milliseconds: 80));
     await tester.tap(find.bySemanticsLabel('Rejoin split hand'));
     await tester.pump();
     expect(
-      engine.splits,
+      engine().splits,
       hasLength(1),
       reason: 'the release was swallowed, so the hand is still frozen',
     );
 
-    clock.advance(const Duration(milliseconds: 200));
+    clocks.advance(const Duration(milliseconds: 200));
     await tester.tap(find.bySemanticsLabel('Rejoin split hand'));
     await tester.pump();
     // Past the debounce the release is accepted: the hand is catching up, and
@@ -100,9 +105,8 @@ void main() {
   testWidgets('a tap on the painted pusher head reaches the control', (
     tester,
   ) async {
-    final clock = FakeMonotonicClock();
-    final engine = TimingEngine(clock: clock);
-    await pumpScreen(tester, clock, engine);
+    final clocks = ClockPair();
+    final session = await pumpScreen(tester, clocks);
 
     // Taken from where the case is actually painted rather than from the
     // widget's own placement arithmetic. A regression guard: it pins the
@@ -124,7 +128,7 @@ void main() {
     await tester.pump();
 
     expect(
-      engine.state,
+      session.engine.state,
       TimingState.running,
       reason: 'the top pusher answers where it is drawn',
     );
@@ -133,25 +137,29 @@ void main() {
   testWidgets('reset is refused while running and clears once stopped', (
     tester,
   ) async {
-    final clock = FakeMonotonicClock();
-    final engine = TimingEngine(clock: clock);
-    await pumpScreen(tester, clock, engine);
+    final clocks = ClockPair();
+    final session = await pumpScreen(tester, clocks);
+    TimingEngine engine() => session.engine;
 
     await tester.tap(find.bySemanticsLabel('Start'));
     await tester.pump();
-    clock.advance(const Duration(seconds: 3));
+    clocks.advance(const Duration(seconds: 3));
     await tester.pump(const Duration(milliseconds: 16));
 
     await tester.tap(find.bySemanticsLabel('Reset'));
     await tester.pump();
-    expect(engine.state, TimingState.running, reason: 'blocked while running');
+    expect(
+      engine().state,
+      TimingState.running,
+      reason: 'blocked while running',
+    );
 
     await tester.tap(find.bySemanticsLabel('Stop'));
     await tester.pump();
     await tester.tap(find.bySemanticsLabel('Reset'));
     await tester.pump();
 
-    expect(engine.state, TimingState.idle);
+    expect(engine().state, TimingState.idle);
     expect(find.text('00:00.00'), findsOneWidget);
   });
 }
