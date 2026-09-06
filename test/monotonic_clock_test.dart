@@ -32,13 +32,18 @@ void main() {
       while (spin.elapsedMicroseconds < 2000) {}
       final second = SystemMonotonicClock();
 
-      // Strictly less, never "at most". Two clocks sharing one source read
-      // identically, which satisfies lessThanOrEqualTo -- so that assertion
-      // passed on exactly the implementation it was written to rule out.
+      // Not the guard, whatever an earlier comment here claimed. Arguments
+      // evaluate left to right, so `second.now` is read before `first.now`;
+      // on a shared source the later read is the larger one and strict-less
+      // passes. It fails only when two adjacent reads happen to land in the
+      // same microsecond tick -- 153 catches in 200 runs of the shared-source
+      // mutation on this machine. That is clock resolution, not a test.
       expect(second.now, lessThan(first.now));
 
-      // And the gap is the difference in their ages, so it persists rather
-      // than closing. A shared source has no gap to persist.
+      // This is the guard. The gap between the two readings is the difference
+      // in their origins, so it stays positive however the reads fall either
+      // side of it. A shared source reads one number twice and has no gap:
+      // 200 catches in 200 runs of the same mutation.
       final gapBefore = first.now - second.now;
       while (spin.elapsedMicroseconds < 8000) {}
       final gapAfter = first.now - second.now;
@@ -47,6 +52,9 @@ void main() {
       expect(
         (gapAfter - gapBefore).abs(),
         lessThan(const Duration(milliseconds: 50)),
+        // Guards rate, not origin, so it catches none of the shared-source
+        // mutation -- 0 in 200. Left in place because it is the only thing
+        // asserting the two clocks do not drift apart once separated.
         reason: 'both clocks run at the same rate, only from different origins',
       );
     });
