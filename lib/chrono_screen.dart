@@ -7,18 +7,18 @@ import 'package:flutter/services.dart';
 import 'chrono_geometry.dart';
 import 'chrono_painter.dart';
 import 'chrono_theme.dart';
-import 'monotonic_clock.dart';
 import 'rattrapante.dart';
+import 'run_persistence.dart';
+import 'run_session.dart';
 import 'timing_engine.dart';
 
 /// The chronograph. One screen: the watch, the readout under it, the laps
 /// under that.
 class ChronoScreen extends StatefulWidget {
-  const ChronoScreen({super.key, this.engine, this.clock});
+  const ChronoScreen({super.key, this.session});
 
-  /// Injectable so a widget test can drive the mechanism from a fake clock.
-  final TimingEngine? engine;
-  final MonotonicClock? clock;
+  /// Injectable so a test can drive both clocks and an in-memory store.
+  final RunSession? session;
 
   @override
   State<ChronoScreen> createState() => _ChronoScreenState();
@@ -26,11 +26,17 @@ class ChronoScreen extends StatefulWidget {
 
 class _ChronoScreenState extends State<ChronoScreen>
     with TickerProviderStateMixin, WidgetsBindingObserver {
-  late final MonotonicClock _clock = widget.clock ?? SystemMonotonicClock();
-  late final TimingEngine _engine =
-      widget.engine ?? TimingEngine(clock: _clock);
+  late final RunSession _session =
+      widget.session ?? RunSession(store: PreferencesRunStore());
+
+  /// [RunSession.restore] replaces the engine wholesale, so this is read fresh
+  /// every time rather than held in a field.
+  TimingEngine get _engine => _session.engine;
+
+  /// The same monotonic clock the engine runs on. Two clocks here would let the
+  /// split hand's animation and the sweep hand's angle disagree.
   late final RattrapanteController _split = RattrapanteController(
-    clock: _clock,
+    clock: _session.monotonic,
   );
   late final Ticker _ticker = createTicker(_onFrame);
 
@@ -50,6 +56,15 @@ class _ChronoScreenState extends State<ChronoScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _split.addListener(_onSplitChanged);
+    _restore();
+  }
+
+  /// A run left by a previous launch is picked up before the first frame the
+  /// user can act on.
+  Future<void> _restore() async {
+    await _session.restore();
+    if (!mounted) return;
+    setState(_syncTicker);
   }
 
   /// One frame. The mechanism advances here, never in [build] -- reading an
@@ -89,27 +104,34 @@ class _ChronoScreenState extends State<ChronoScreen>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // A whip that finished while the app was away never happened on screen.
-    // Drop the hand home rather than animating a stale one.
-    if (state == AppLifecycleState.resumed && _split.isCatchingUp) {
-      _split.cancelToJoined();
+    switch (state) {
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+        _session.handleSuspend();
+      case AppLifecycleState.resumed:
+        // A whip that finished while the app was away never happened on
+        // screen. Drop the hand home rather than animating a stale one.
+        if (_split.isCatchingUp) _split.cancelToJoined();
+        _session.handleResume();
+        setState(_syncTicker);
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+        break;
     }
   }
 
   bool get _reduceMotion => MediaQuery.disableAnimationsOf(context);
 
   /// [ID-11]. Always enabled, always full travel.
-  void _pressStart() {
+  Future<void> _pressStart() async {
     HapticFeedback.mediumImpact();
     _travel(_startTravel, 1);
-    setState(() {
-      if (_engine.isRunning) {
-        _engine.stop();
-      } else {
-        _engine.start();
-      }
-      _syncTicker();
-    });
+    if (_engine.isRunning) {
+      await _session.stop();
+    } else {
+      await _session.start();
+    }
+    if (mounted) setState(_syncTicker);
   }
 
   /// The last crown press the mechanism accepted. A rattrapante's pincers
@@ -119,9 +141,9 @@ class _ChronoScreenState extends State<ChronoScreen>
   static const Duration _crownDebounce = Duration(milliseconds: 120);
 
   /// [ID-12]. Disabled at idle, swallowed while a catch-up is in flight.
-  void _pressCrown() {
+  Future<void> _pressCrown() async {
     // Debounced on every tap, the disabled stub included.
-    final now = _clock.now;
+    final now = _session.monotonic.now;
     if (now - _lastCrownPress < _crownDebounce) return;
     _lastCrownPress = now;
 
@@ -136,18 +158,18 @@ class _ChronoScreenState extends State<ChronoScreen>
     if (_split.isCatchingUp) return;
 
     _travel(_crownTravel, 1);
-    setState(() {
-      if (_split.state == SplitState.joined) {
-        _split.freeze(_engine.split());
-      } else {
-        _split.release(elapsed: _engine.elapsed, reduceMotion: _reduceMotion);
-      }
-      _syncTicker();
-    });
+    if (_split.state == SplitState.joined) {
+      // The mark is recorded through the session, so a lap survives a
+      // force-quit along with the run it belongs to.
+      _split.freeze(await _session.split());
+    } else {
+      _split.release(elapsed: _engine.elapsed, reduceMotion: _reduceMotion);
+    }
+    if (mounted) setState(_syncTicker);
   }
 
   /// [ID-13]. Live unless running, where the mechanism refuses it.
-  void _pressReset() {
+  Future<void> _pressReset() async {
     if (_engine.isRunning) {
       // "blocked": enabled to the eye, refused by the mechanism. A hard stop
       // after a fraction of the travel.
@@ -157,11 +179,11 @@ class _ChronoScreenState extends State<ChronoScreen>
     }
     HapticFeedback.heavyImpact();
     _travel(_resetTravel, 1);
-    setState(() {
-      _split.reset();
-      if (_engine.state == TimingState.stopped) _engine.reset();
-      _syncTicker();
-    });
+    _split.reset();
+    // Reset is live at idle and changes nothing there -- the engine refuses it
+    // and the record is already clear.
+    if (_engine.state == TimingState.stopped) await _session.reset();
+    if (mounted) setState(_syncTicker);
   }
 
   void _travel(AnimationController c, double depth) {
