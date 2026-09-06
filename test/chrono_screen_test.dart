@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:stopwatch/chrono_geometry.dart';
 import 'package:stopwatch/chrono_painter.dart';
 import 'package:stopwatch/chrono_screen.dart';
 import 'package:stopwatch/chrono_theme.dart';
@@ -102,37 +102,38 @@ void main() {
     expect(find.bySemanticsLabel('Split'), findsOneWidget);
   });
 
-  testWidgets('a tap on the painted pusher head reaches the control', (
-    tester,
-  ) async {
-    final clocks = ClockPair();
-    final session = await pumpScreen(tester, clocks);
+  testWidgets(
+    'the controls sit below the dial and answer where they are drawn',
+    (tester) async {
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
 
-    // Taken from where the case is actually painted rather than from the
-    // widget's own placement arithmetic. A regression guard: it pins the
-    // targets to the painted heads so a change to either has to move both.
-    final canvas = tester.getRect(
-      find.byWidgetPredicate(
-        (w) => w is CustomPaint && w.painter is ChronoPainter,
-      ),
-    );
-    final scale = canvas.width / Dial.boxWidth;
-    const headRadius = 220.0;
-    final head = polar(Dial.centre, Dial.centre, headRadius, 60);
-    final target = Offset(
-      canvas.left + (head.dx - Dial.boxLeft) * scale,
-      canvas.top + (head.dy - Dial.boxTop) * scale,
-    );
+      final dial = tester.getRect(
+        find.byWidgetPredicate(
+          (w) => w is CustomPaint && w.painter is ChronoPainter,
+        ),
+      );
+      // The case is gone, so nothing rides its flank any more. Measured against
+      // where the dial is actually painted rather than against the arithmetic
+      // that placed it.
+      for (final label in ['Start', 'Split', 'Reset']) {
+        expect(
+          tester.getRect(find.bySemanticsLabel(label)).top,
+          greaterThanOrEqualTo(dial.bottom),
+          reason: '$label sits below the face, not on a case flank',
+        );
+      }
 
-    await tester.tapAt(target);
-    await tester.pump();
+      await tester.tapAt(tester.getCenter(find.bySemanticsLabel('Start')));
+      await tester.pump();
 
-    expect(
-      session.engine.state,
-      TimingState.running,
-      reason: 'the top pusher answers where it is drawn',
-    );
-  });
+      expect(
+        session.engine.state,
+        TimingState.running,
+        reason: 'the pusher answers where its head is drawn',
+      );
+    },
+  );
 
   testWidgets('reset is refused while running and clears once stopped', (
     tester,
@@ -161,5 +162,107 @@ void main() {
 
     expect(engine().state, TimingState.idle);
     expect(find.text('00:00.00'), findsOneWidget);
+  });
+
+  /// Every control has to be reachable by assistive tech, and a pointer tap
+  /// proves nothing about that: it lands on the button underneath and works
+  /// whether or not the semantics node carries an action at all. These drive
+  /// the node itself, which is what VoiceOver does.
+  group('activation through the semantics tree', () {
+    testWidgets('every control carries a tap action', (tester) async {
+      final handle = tester.ensureSemantics();
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      // Split and reset both need a state where they are live, so the three
+      // are checked where each one is enabled.
+      await tester.tap(find.bySemanticsLabel('Start'));
+      await tester.pump();
+      clocks.advance(const Duration(seconds: 2));
+      await tester.pump(const Duration(milliseconds: 16));
+      await tester.tap(find.bySemanticsLabel('Stop'));
+      await tester.pump();
+
+      for (final label in ['Start', 'Split', 'Reset']) {
+        expect(
+          tester
+              .getSemantics(find.bySemanticsLabel(label))
+              .getSemanticsData()
+              .hasAction(SemanticsAction.tap),
+          isTrue,
+          reason: '$label cannot be activated by VoiceOver',
+        );
+      }
+
+      expect(session.engine.state, TimingState.stopped);
+      handle.dispose();
+    });
+
+    testWidgets('start runs the chronograph', (tester) async {
+      final handle = tester.ensureSemantics();
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Start'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      expect(session.engine.state, TimingState.running);
+      handle.dispose();
+    });
+
+    testWidgets('split records a lap', (tester) async {
+      final handle = tester.ensureSemantics();
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Start'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+      clocks.advance(const Duration(seconds: 4));
+      await tester.pump(const Duration(milliseconds: 16));
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Split'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      expect(session.engine.splits, [const Duration(seconds: 4)]);
+      handle.dispose();
+    });
+
+    testWidgets('reset clears a stopped run', (tester) async {
+      final handle = tester.ensureSemantics();
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Start'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+      clocks.advance(const Duration(seconds: 3));
+      await tester.pump(const Duration(milliseconds: 16));
+      tester.semantics.performAction(
+        find.semantics.byLabel('Stop'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      tester.semantics.performAction(
+        find.semantics.byLabel('Reset'),
+        SemanticsAction.tap,
+      );
+      await tester.pump();
+
+      expect(session.engine.state, TimingState.idle);
+      expect(find.text('00:00.00'), findsOneWidget);
+      handle.dispose();
+    });
   });
 }

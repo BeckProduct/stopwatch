@@ -7,7 +7,7 @@ import 'chrono_geometry.dart';
 import 'chrono_theme.dart';
 import 'rattrapante.dart';
 
-/// Everything inside the crystal, plus the case and the pushers around it.
+/// The dial and everything on it. No case: the rim is the only frame.
 ///
 /// A pure function of its inputs: it reads no clock and holds no state. The
 /// elapsed value is read once per frame by the widget above and handed down, so
@@ -18,9 +18,7 @@ class ChronoPainter extends CustomPainter {
     required this.elapsed,
     required this.splitDeg,
     required this.splitState,
-    required this.lapCount,
     required this.reduceMotion,
-    required this.pusherTravel,
     required this.smearFromDeg,
     required this.splitFade,
   });
@@ -29,11 +27,7 @@ class ChronoPainter extends CustomPainter {
   final Duration elapsed;
   final double splitDeg;
   final SplitState splitState;
-  final int lapCount;
   final bool reduceMotion;
-
-  /// Depression of each pusher, 0..1 of full 3-unit travel.
-  final ({double start, double crown, double reset}) pusherTravel;
 
   /// Where the split hand was last frame, when the sector between then and now
   /// is wide enough to be worth smearing.
@@ -49,11 +43,8 @@ class ChronoPainter extends CustomPainter {
     canvas.scale(scale);
     canvas.translate(-Dial.boxLeft, -Dial.boxTop);
 
-    _paintLugs(canvas);
-    _paintPushers(canvas);
-    _paintCase(canvas);
-    _paintBezel(canvas);
     _paintDialPlate(canvas);
+    _paintRim(canvas);
     _paintTracks(canvas);
     _paintBatons(canvas);
     _paintSignature(canvas);
@@ -71,159 +62,6 @@ class ChronoPainter extends CustomPainter {
 
   Paint get _p => Paint()..isAntiAlias = true;
 
-  void _paintLugs(Canvas canvas) {
-    final steel = _p
-      ..strokeWidth = 34
-      ..strokeCap = StrokeCap.round
-      ..style = PaintingStyle.stroke
-      ..shader = ui.Gradient.linear(
-        const Offset(0, 0),
-        const Offset(162, 400),
-        [theme.steel0, theme.steel1, theme.steel2, theme.steel3],
-        const [0, 0.42, 0.72, 1],
-      );
-    for (final l in const [
-      [112.0, 76.0, 88.0, -16.0],
-      [288.0, 76.0, 312.0, -16.0],
-      [112.0, 324.0, 88.0, 416.0],
-      [288.0, 324.0, 312.0, 416.0],
-    ]) {
-      canvas.drawLine(Offset(l[0], l[1]), Offset(l[2], l[3]), steel);
-    }
-  }
-
-  /// Case controls at 60, 90 and 120 degrees. Travel is 3 dial units at full
-  /// depression, scaled by how far each pusher is pressed.
-  void _paintPushers(Canvas canvas) {
-    _pusher(canvas, 60, pusherTravel.start, 15, 26, false);
-    _pusher(canvas, 120, pusherTravel.reset, 15, 26, false);
-    _pusher(canvas, 90, pusherTravel.crown, 18, 30, true);
-  }
-
-  void _pusher(
-    Canvas canvas,
-    double deg,
-    double travel,
-    double halfWidth,
-    double height,
-    bool isCrown,
-  ) {
-    canvas.save();
-    canvas.translate(Dial.centre, Dial.centre);
-    canvas.rotate(deg * math.pi / 180);
-    canvas.translate(-Dial.centre, -Dial.centre);
-    // Depression pushes the head towards the case: +y in this rotated frame.
-    canvas.translate(0, travel * 3);
-
-    final body = _p
-      ..shader = ui.Gradient.linear(
-        Offset(Dial.centre - halfWidth, 0),
-        Offset(Dial.centre + halfWidth, 0),
-        [theme.steel3, theme.steel0, theme.steel3],
-        const [0, 0.35, 1],
-      );
-    canvas.drawRRect(
-      RRect.fromRectAndRadius(
-        Rect.fromLTWH(Dial.centre - halfWidth, -34, halfWidth * 2, height + 34),
-        const Radius.circular(5),
-      ),
-      body,
-    );
-    if (isCrown) {
-      canvas.drawCircle(
-        const Offset(Dial.centre, -25),
-        6.4,
-        _p..color = theme.accent1,
-      );
-    }
-    canvas.restore();
-  }
-
-  void _paintCase(Canvas canvas) {
-    canvas.drawCircle(
-      _c,
-      Dial.caseRadius,
-      _p
-        ..shader = ui.Gradient.linear(
-          const Offset(0, 0),
-          const Offset(162, 400),
-          [theme.steel0, theme.steel1, theme.steel2, theme.steel3],
-          const [0, 0.42, 0.72, 1],
-        ),
-    );
-    canvas.drawCircle(
-      _c,
-      188,
-      _p
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 1.4
-        ..color = theme.steel3.withValues(alpha: 0.55),
-    );
-  }
-
-  void _paintBezel(Canvas canvas) {
-    canvas.drawCircle(
-      _c,
-      186,
-      _p
-        ..shader = ui.Gradient.radial(
-          const Offset(0.34 * 372 + 14, 0.24 * 372 + 14),
-          0.92 * 372,
-          [theme.bez0, theme.bez1, theme.bez2],
-          const [0, 0.6, 1],
-        ),
-    );
-
-    // Tachymeter. Each value sits at the angle a lap of that speed takes.
-    const values = [
-      400, 300, 240, 200, 180, 160, 150, 140, 130, 125, 120, 115, 110, //
-      105, 100, 95, 90, 85, 80, 75, 70, 65, 60,
-    ];
-    final tick = _p
-      ..style = PaintingStyle.stroke
-      ..strokeWidth = 0.9
-      ..color = theme.bezText.withValues(alpha: 0.75);
-    for (final v in values) {
-      final deg = (3600 / v) / 60 * 360;
-      final a = polar(Dial.centre, Dial.centre, 162, deg);
-      final b = polar(Dial.centre, Dial.centre, 168, deg);
-      canvas.drawLine(Offset(a.dx, a.dy), Offset(b.dx, b.dy), tick);
-      final p = polar(Dial.centre, Dial.centre, Dial.rTachy, deg);
-      _rotatedText(
-        canvas,
-        '$v',
-        Offset(p.dx, p.dy),
-        deg,
-        TextStyle(
-          fontSize: 9.4,
-          fontWeight: FontWeight.w600,
-          color: theme.bezText,
-          fontFamily: 'Archivo',
-        ),
-      );
-    }
-    _text(
-      canvas,
-      'TACHYMETRE',
-      const Offset(Dial.centre, 176),
-      TextStyle(
-        fontSize: 7.2,
-        letterSpacing: 3.2,
-        fontWeight: FontWeight.w600,
-        color: theme.bezText.withValues(alpha: 0.8),
-        fontFamily: 'Archivo',
-      ),
-    );
-    canvas.drawCircle(
-      _c,
-      158,
-      _p
-        ..style = PaintingStyle.stroke
-        ..strokeWidth = 2.2
-        ..color = Colors.black.withValues(alpha: 0.55),
-    );
-  }
-
   void _paintDialPlate(Canvas canvas) {
     canvas.drawCircle(
       _c,
@@ -235,6 +73,41 @@ class ChronoPainter extends CustomPainter {
           [theme.dial0, theme.dial1, theme.dial2],
           const [0, 0.62, 1],
         ),
+    );
+  }
+
+  /// The rim. A bare dial on a bare background needs an edge of its own, so
+  /// this is a turned ring with a lit outer hairline and a dark seam against
+  /// the plate -- the reading the bezel used to give for free.
+  void _paintRim(Canvas canvas) {
+    canvas.drawCircle(
+      _c,
+      (Dial.rimInner + Dial.rimOuter) / 2,
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = Dial.rimOuter - Dial.rimInner
+        ..shader = ui.Gradient.linear(
+          const Offset(64, 44),
+          const Offset(336, 356),
+          [theme.bez0, theme.bez1, theme.bez2],
+          const [0, 0.55, 1],
+        ),
+    );
+    canvas.drawCircle(
+      _c,
+      Dial.rimOuter,
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1
+        ..color = theme.steel1.withValues(alpha: 0.7),
+    );
+    canvas.drawCircle(
+      _c,
+      Dial.rimInner + 0.7,
+      _p
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 1.6
+        ..color = Colors.black.withValues(alpha: 0.55),
     );
   }
 
@@ -374,14 +247,16 @@ class ChronoPainter extends CustomPainter {
       36,
       false,
     );
+    // Ten divisions, a revolution a second. Quantised with the sweep hand:
+    // it is the fastest thing on the dial and the one Reduce Motion is for.
     _register(
       canvas,
-      Offset(Dial.lapsCentre.dx, Dial.lapsCentre.dy),
-      'LAP',
-      lapDegFor(lapCount),
-      12,
-      4,
-      const [(4, 120.0), (8, 240.0), (12, 0.0)],
+      Offset(Dial.tenthsCentre.dx, Dial.tenthsCentre.dy),
+      '1/10',
+      tenthDegFor(quantise(elapsed, reduceMotion: reduceMotion)),
+      10,
+      5,
+      const [(5, 180.0), (10, 0.0)],
       36,
       splitState != SplitState.joined,
     );
@@ -495,7 +370,7 @@ class ChronoPainter extends CustomPainter {
     final path = Path()
       ..moveTo(Dial.centre, Dial.centre)
       ..arcTo(
-        Rect.fromCircle(center: _c, radius: 200),
+        Rect.fromCircle(center: _c, radius: Dial.plateRadius),
         (from - 90) * math.pi / 180,
         sweptDeg * math.pi / 180,
         false,
@@ -503,7 +378,11 @@ class ChronoPainter extends CustomPainter {
       ..close();
     canvas.save();
     canvas.clipPath(path);
-    canvas.drawCircle(_c, 200, _p..color = theme.rat1.withValues(alpha: 0.24));
+    canvas.drawCircle(
+      _c,
+      Dial.plateRadius,
+      _p..color = theme.rat1.withValues(alpha: 0.24),
+    );
     canvas.drawCircle(_c, 60, _p..blendMode = BlendMode.clear);
     canvas.restore();
   }
@@ -592,6 +471,12 @@ class ChronoPainter extends CustomPainter {
   void _paintGlare(Canvas canvas) {
     if (theme.glareOpacity <= 0) return;
     canvas.save();
+    // Clipped to the crystal. The case used to cover the corner of this oval
+    // that reaches past 10 o'clock; on a bare background it read as a smudge
+    // sitting outside the dial.
+    canvas.clipPath(
+      Path()..addOval(Rect.fromCircle(center: _c, radius: Dial.plateRadius)),
+    );
     canvas.translate(150, 128);
     canvas.rotate(-24 * math.pi / 180);
     canvas.drawOval(
@@ -623,29 +508,13 @@ class ChronoPainter extends CustomPainter {
     tp.paint(canvas, centre.translate(-tp.width / 2, -tp.height / 2));
   }
 
-  void _rotatedText(
-    Canvas canvas,
-    String s,
-    Offset centre,
-    double deg,
-    TextStyle style,
-  ) {
-    canvas.save();
-    canvas.translate(centre.dx, centre.dy);
-    canvas.rotate(deg * math.pi / 180);
-    _text(canvas, s, Offset.zero, style);
-    canvas.restore();
-  }
-
   @override
   bool shouldRepaint(ChronoPainter old) =>
       old.elapsed != elapsed ||
       old.splitDeg != splitDeg ||
       old.splitState != splitState ||
-      old.lapCount != lapCount ||
       old.theme != theme ||
       old.reduceMotion != reduceMotion ||
-      old.pusherTravel != pusherTravel ||
       old.smearFromDeg != smearFromDeg ||
       old.splitFade != splitFade;
 }
