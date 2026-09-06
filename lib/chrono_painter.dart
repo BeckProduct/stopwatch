@@ -335,9 +335,11 @@ class ChronoPainter extends CustomPainter {
         fontFamily: 'Archivo',
       ),
     );
+    // Not "SWISS MADE": this watch is not, and the term is protected. The
+    // dial foot says what is actually true of the movement behind it.
     _text(
       canvas,
-      'SWISS MADE',
+      'MONOTONIC',
       const Offset(Dial.centre, 324),
       TextStyle(
         fontSize: 6,
