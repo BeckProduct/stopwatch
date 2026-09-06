@@ -32,7 +32,7 @@ class _ChronoScreenState extends State<ChronoScreen>
   late final RattrapanteController _split = RattrapanteController(
     clock: _clock,
   );
-  late final Ticker _ticker = createTicker((_) => setState(() {}));
+  late final Ticker _ticker = createTicker(_onFrame);
 
   /// Pusher depression, 0..1 of the 3-unit full travel. Released over 90 ms.
   late final AnimationController _startTravel = _travelController();
@@ -50,9 +50,25 @@ class _ChronoScreenState extends State<ChronoScreen>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _split.addListener(_onSplitChanged);
-    // The catch-up runs on the ticker, so the ticker has to be live for it even
-    // when the chronograph itself is stopped.
-    _ticker.start();
+  }
+
+  /// One frame. The mechanism advances here, never in [build] -- reading an
+  /// angle must not fire haptics or rebuild the tree mid-build.
+  void _onFrame(Duration _) {
+    _split.advance(_engine.elapsed, reduceMotion: _reduceMotion);
+    setState(_syncTicker);
+  }
+
+  /// The ticker runs while something is moving: the chronograph itself, or a
+  /// split hand still catching up on a stopped one. Left running at idle it
+  /// rebuilds the whole dial at the display's refresh rate forever.
+  void _syncTicker() {
+    final wanted = _engine.isRunning || _split.isCatchingUp;
+    if (wanted && !_ticker.isActive) {
+      _ticker.start();
+    } else if (!wanted && _ticker.isActive) {
+      _ticker.stop();
+    }
   }
 
   @override
@@ -68,7 +84,7 @@ class _ChronoScreenState extends State<ChronoScreen>
   }
 
   void _onSplitChanged() {
-    if (mounted) setState(() {});
+    if (mounted) setState(_syncTicker);
   }
 
   @override
@@ -92,6 +108,7 @@ class _ChronoScreenState extends State<ChronoScreen>
       } else {
         _engine.start();
       }
+      _syncTicker();
     });
   }
 
@@ -125,6 +142,7 @@ class _ChronoScreenState extends State<ChronoScreen>
       } else {
         _split.release(elapsed: _engine.elapsed, reduceMotion: _reduceMotion);
       }
+      _syncTicker();
     });
   }
 
@@ -142,6 +160,7 @@ class _ChronoScreenState extends State<ChronoScreen>
     setState(() {
       _split.reset();
       if (_engine.state == TimingState.stopped) _engine.reset();
+      _syncTicker();
     });
   }
 
@@ -157,7 +176,7 @@ class _ChronoScreenState extends State<ChronoScreen>
     // or they disagree and the disagreement grows with the run.
     final elapsed = _engine.elapsed;
     final reduceMotion = _reduceMotion;
-    final splitDeg = _split.angleFor(elapsed, reduceMotion: reduceMotion);
+    final splitDeg = _split.angleAt(elapsed, reduceMotion: reduceMotion);
     final chrono = ChronoTheme.of(context);
     final splits = _engine.splits;
     final laps = _engine.lapTimes;
@@ -241,12 +260,8 @@ class _ChronoScreenState extends State<ChronoScreen>
                       crown: _crownTravel.value,
                       reset: _resetTravel.value,
                     ),
-                    smearFromDeg: _split.smearsThisFrame
-                        ? _split.previousDeg
-                        : null,
-                    splitFade: _split.isReducedMotionFade
-                        ? (_split.fadeProgress < 0.5 ? 1.0 : 1.0)
-                        : 1.0,
+                    smearFromDeg: _split.smearFrom,
+                    splitFade: _split.splitOpacity,
                   ),
                 ),
               ),

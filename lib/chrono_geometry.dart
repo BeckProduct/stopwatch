@@ -67,6 +67,13 @@ double lapDegFor(int lapCount) => (lapCount % 12) / 12 * 360;
 double forwardDelta(double fromDeg, double toDeg) =>
     ((toDeg - fromDeg) % 360 + 360) % 360;
 
+/// The sector a hand crossed between two frames, or null when it is too narrow
+/// to read as motion rather than as a smudge on the dial.
+double? smearSweep(double fromDeg, double toDeg) {
+  final swept = forwardDelta(fromDeg, toDeg);
+  return swept > 6 ? swept : null;
+}
+
 /// Cartesian point at [deg] clockwise from 12 o'clock, [r] from ([cx], [cy]).
 ({double dx, double dy}) polar(double cx, double cy, double r, double deg) {
   final a = (deg - 90) * math.pi / 180;

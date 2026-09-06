@@ -488,8 +488,8 @@ class ChronoPainter extends CustomPainter {
   void _paintSmear(Canvas canvas) {
     final from = smearFromDeg;
     if (from == null) return;
-    final sweptDeg = forwardDelta(from, splitDeg);
-    if (sweptDeg <= 6) return;
+    final sweptDeg = smearSweep(from, splitDeg);
+    if (sweptDeg == null) return;
     final path = Path()
       ..moveTo(Dial.centre, Dial.centre)
       ..arcTo(
@@ -512,14 +512,16 @@ class ChronoPainter extends CustomPainter {
     canvas.save();
     canvas.translate(Dial.centre, Dial.centre);
     canvas.rotate(splitDeg * math.pi / 180);
-    final shader = ui.Gradient.linear(
-      const Offset(0, -154),
-      const Offset(0, 34),
-      [theme.rat0, theme.rat1],
-    );
+    // A Paint carrying a shader ignores its colour, so the cross-fade has to
+    // go into the gradient's own stops and into every solid fill beside it.
+    final rat0 = theme.rat0.withValues(alpha: opacity);
+    final rat1 = theme.rat1.withValues(alpha: opacity);
     final paint = _p
-      ..shader = shader
-      ..color = Colors.white.withValues(alpha: opacity);
+      ..shader = ui.Gradient.linear(
+        const Offset(0, -154),
+        const Offset(0, 34),
+        [rat0, rat1],
+      );
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(-2.6, -142, 5.2, 150),
@@ -535,7 +537,7 @@ class ChronoPainter extends CustomPainter {
         ..close(),
       paint,
     );
-    canvas.drawCircle(Offset.zero, 9.5, _p..color = theme.rat1);
+    canvas.drawCircle(Offset.zero, 9.5, _p..color = rat1);
     canvas.drawRRect(
       RRect.fromRectAndRadius(
         const Rect.fromLTWH(-2.6, 0, 5.2, 34),
@@ -543,7 +545,7 @@ class ChronoPainter extends CustomPainter {
       ),
       paint,
     );
-    canvas.drawCircle(const Offset(0, 32), 6.5, _p..color = theme.rat1);
+    canvas.drawCircle(const Offset(0, 32), 6.5, _p..color = rat1);
     canvas.restore();
   }
 

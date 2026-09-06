@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/animation.dart';
@@ -67,23 +66,27 @@ class RattrapanteController extends ChangeNotifier {
   int _settle = settleMs;
   bool _landed = false;
 
-  /// The angle the smear was drawn to last frame, so this frame's sector can be
-  /// measured rather than guessed. Null when there is nothing to smear.
+  /// Where the hand was drawn on the previous frame [advance] saw.
   double? _previousDeg;
-  double? get previousDeg => _previousDeg;
 
-  /// True only while the whip is running: the cross-fade never draws a smear.
-  bool get smearsThisFrame => _state == SplitState.catchingUp && !_reduceMotion;
+  /// The angle to smear *from* this frame: the previous frame's, never this
+  /// one's. Null when there is nothing to smear -- the first frame after a
+  /// release, a cross-fade, or a hand that has landed.
+  double? _smearFrom;
+  double? get smearFrom => _smearFrom;
 
-  /// Cross-fade opacity for Reduce Motion: the frozen hand fades out over the
-  /// first half, the joined hand fades in over the second.
-  double get fadeProgress {
+  /// The split hand's opacity.
+  ///
+  /// 1 everywhere except the Reduce Motion cross-fade, which has no travel to
+  /// show and dissolves instead: out over the first half while the hand is
+  /// still held, back in over the second at the live angle.
+  double get splitOpacity {
     if (!_reduceMotion || _state != SplitState.catchingUp) return 1;
     final t = (clock.now - _releasedAt).inMilliseconds;
-    return (t / (_whipMs + _settle)).clamp(0.0, 1.0);
+    final half = _whipMs;
+    if (t < half) return (1 - t / half).clamp(0.0, 1.0);
+    return ((t - half) / _settle).clamp(0.0, 1.0);
   }
-
-  bool get isReducedMotionFade => _reduceMotion && isCatchingUp;
 
   /// Clamps the hand where it stands. Zero duration: no tween, no curve. The
   /// dead stop is the effect.
@@ -91,6 +94,7 @@ class RattrapanteController extends ChangeNotifier {
     _frozenElapsed = elapsed;
     _state = SplitState.frozen;
     _previousDeg = null;
+    _smearFrom = null;
     HapticFeedback.mediumImpact();
     notifyListeners();
   }
@@ -111,6 +115,7 @@ class RattrapanteController extends ChangeNotifier {
     _settle = reduceMotion ? reducedSettleMs : settleMs;
     _landed = false;
     _previousDeg = null;
+    _smearFrom = null;
     _state = SplitState.catchingUp;
     HapticFeedback.heavyImpact();
     notifyListeners();
@@ -122,6 +127,7 @@ class RattrapanteController extends ChangeNotifier {
     if (_state == SplitState.joined) return;
     _state = SplitState.joined;
     _previousDeg = null;
+    _smearFrom = null;
     notifyListeners();
   }
 
@@ -131,26 +137,63 @@ class RattrapanteController extends ChangeNotifier {
     _state = SplitState.joined;
     _frozenElapsed = Duration.zero;
     _previousDeg = null;
+    _smearFrom = null;
     notifyListeners();
+  }
+
+  /// Advances the mechanism by one frame. Called from the ticker.
+  ///
+  /// Everything that changes lives here and nowhere else: the landing haptic,
+  /// the roll of the smear's start angle, and the transition back to joined.
+  /// Keeping it out of [angleAt] is what lets the painter read an angle during
+  /// build without firing feedback or rebuilding mid-build.
+  void advance(Duration elapsed, {required bool reduceMotion}) {
+    if (_state != SplitState.catchingUp) {
+      _previousDeg = null;
+      _smearFrom = null;
+      return;
+    }
+
+    final t = (clock.now - _releasedAt).inMilliseconds;
+
+    // The roller hits the cam at the end of the whip.
+    if (!_landed && t >= _whipMs) {
+      _landed = true;
+      HapticFeedback.selectionClick();
+    }
+
+    final deg = angleAt(elapsed, reduceMotion: reduceMotion);
+    // Last frame's angle, so the sector between the two has width. Setting it
+    // from this frame's angle is a sector of zero and draws nothing at all.
+    _smearFrom = _reduceMotion ? null : _previousDeg;
+    _previousDeg = deg;
+
+    if (t >= _whipMs + _settle) {
+      _state = SplitState.joined;
+      _previousDeg = null;
+      _smearFrom = null;
+      // The transition happens here rather than on a press, so it has to
+      // announce itself or the Split control keeps reporting busy to
+      // VoiceOver. Safe to do synchronously: this is the ticker, not build.
+      notifyListeners();
+    }
   }
 
   /// The split hand's angle for a frame whose elapsed reading is [elapsed].
   ///
-  /// Call once per frame with the same elapsed value the sweep hand is drawn
-  /// from, or the two hands can land in different Reduce Motion buckets and
-  /// break the hairline they are specified around.
-  double angleFor(Duration elapsed, {required bool reduceMotion}) {
+  /// Pure: reading it changes nothing and fires nothing, so the painter can
+  /// call it during build. Call it with the same elapsed value the sweep hand
+  /// is drawn from, or the two hands can land in different Reduce Motion
+  /// buckets and break the hairline they are specified around.
+  double angleAt(Duration elapsed, {required bool reduceMotion}) {
     final live = sweepDegFor(quantise(elapsed, reduceMotion: reduceMotion));
     switch (_state) {
       case SplitState.joined:
-        _previousDeg = live;
         return live;
       case SplitState.frozen:
-        final held = sweepDegFor(
+        return sweepDegFor(
           quantise(_frozenElapsed, reduceMotion: reduceMotion),
         );
-        _previousDeg = held;
-        return held;
       case SplitState.catchingUp:
         return _whipAngle(live);
     }
@@ -159,44 +202,24 @@ class RattrapanteController extends ChangeNotifier {
   double _whipAngle(double live) {
     final t = (clock.now - _releasedAt).inMilliseconds;
 
-    // The roller hits the cam at the end of the whip. Fires once, from inside
-    // the frame loop -- there is no user action at this instant.
-    if (!_landed && t >= _whipMs) {
-      _landed = true;
-      HapticFeedback.selectionClick();
-    }
-
-    if (t >= _whipMs + _settle) {
-      // Completion happens in the ticker, not on a press, so it has to notify
-      // or [ID-12]'s Semantics node keeps reporting busy to VoiceOver until
-      // some later unrelated rebuild. Nothing on screen looks wrong.
-      _state = SplitState.joined;
-      _previousDeg = null;
-      scheduleMicrotask(notifyListeners);
-      return live;
-    }
+    if (t >= _whipMs + _settle) return live;
 
     if (_reduceMotion) {
       // No travel under Reduce Motion: the hand is either held or joined, and
-      // the two cross-fade. Both haptics still fire.
-      _previousDeg = null;
+      // the two dissolve into each other. Both haptics still fire.
       return t < _whipMs ? _fromDeg : live;
     }
 
     // Recomputed against the LIVE angle every frame, never a captured target.
     final remaining = forwardDelta(_fromDeg, live) + 360 * _revs;
 
-    double deg;
     if (t < _whipMs) {
       final p = easeWhip.transform(t / _whipMs);
-      deg = _fromDeg + (remaining + overshootDeg) * p;
-    } else {
-      // Ring-down: the overshoot decays onto the live angle, which is itself
-      // still moving.
-      final s = ((t - _whipMs) / _settle).clamp(0.0, 1.0);
-      deg = live + overshootDeg * (1 - Curves.easeOut.transform(s));
+      return _fromDeg + (remaining + overshootDeg) * p;
     }
-    _previousDeg = deg;
-    return deg;
+    // Ring-down: the overshoot decays onto the live angle, which is itself
+    // still moving.
+    final settle = ((t - _whipMs) / _settle).clamp(0.0, 1.0);
+    return live + overshootDeg * (1 - Curves.easeOut.transform(settle));
   }
 }

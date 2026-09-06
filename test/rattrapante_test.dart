@@ -28,7 +28,14 @@ void main() {
   /// the whole point: the target moves while the whip is in flight.
   Duration elapsed() => clock.now - origin;
 
-  double angle() => split.angleFor(elapsed(), reduceMotion: false);
+  double angle() => split.angleAt(elapsed(), reduceMotion: false);
+
+  /// One frame of the ticker: advance the mechanism, then read what the
+  /// painter would read.
+  double frame({bool reduceMotion = false}) {
+    split.advance(elapsed(), reduceMotion: reduceMotion);
+    return split.angleAt(elapsed(), reduceMotion: reduceMotion);
+  }
 
   void freezeAt(Duration at) {
     clock.advance(at - elapsed());
@@ -69,7 +76,7 @@ void main() {
       // 150 ms whip (under a minute behind) plus a 90 ms ring-down.
       clock.advance(const Duration(milliseconds: 240));
 
-      expect(angle(), closeTo(sweepDegFor(elapsed()), 0.001));
+      expect(frame(), closeTo(sweepDegFor(elapsed()), 0.001));
       expect(split.state, SplitState.joined);
     });
 
@@ -120,11 +127,11 @@ void main() {
       // Two revs -> a 240 ms whip, plus the 90 ms settle.
       clock.advance(const Duration(milliseconds: 330));
 
-      expect(angle(), closeTo(sweepDegFor(elapsed()), 0.001));
+      expect(frame(), closeTo(sweepDegFor(elapsed()), 0.001));
       expect(split.state, SplitState.joined);
     });
 
-    test('leaves catchingUp exactly once, and notifies when it does', () async {
+    test('leaves catchingUp exactly once, and notifies when it does', () {
       var notifications = 0;
       split.addListener(() => notifications++);
 
@@ -136,7 +143,7 @@ void main() {
       final states = <SplitState>[];
       for (var i = 0; i < 30; i++) {
         clock.advance(const Duration(milliseconds: 16));
-        angle();
+        frame();
         states.add(split.state);
       }
 
@@ -147,10 +154,8 @@ void main() {
         reason: 'it goes catchingUp -> joined once, and does not go back',
       );
       // The transition happens in the frame loop, not on a press. It is
-      // deferred by a microtask because the angle is read during paint, and a
-      // synchronous notify there would rebuild mid-build -- but it must still
-      // arrive, or the Split control keeps reporting busy to VoiceOver.
-      await Future<void>.delayed(Duration.zero);
+      // fired from the ticker rather than a press. It must still arrive, or
+      // the Split control keeps reporting busy to VoiceOver.
       expect(notifications, greaterThan(afterRelease));
     });
 
@@ -165,8 +170,8 @@ void main() {
       // 75 ms into a 150 ms whip. Both reads happen at this same instant, so
       // the animation's own progress is identical between them.
       clock.advance(const Duration(milliseconds: 75));
-      final againstNow = split.angleFor(elapsed(), reduceMotion: false);
-      final againstLater = split.angleFor(
+      final againstNow = split.angleAt(elapsed(), reduceMotion: false);
+      final againstLater = split.angleAt(
         elapsed() + const Duration(seconds: 20),
         reduceMotion: false,
       );
@@ -179,6 +184,127 @@ void main() {
     });
   });
 
+  group('the smear', () {
+    test('measures the sector actually crossed since the previous frame', () {
+      freezeAt(const Duration(seconds: 10));
+      clock.advance(const Duration(seconds: 8));
+      split.release(elapsed: elapsed(), reduceMotion: false);
+
+      // Nothing to smear from on the first frame after release.
+      clock.advance(const Duration(milliseconds: 16));
+      frame();
+      expect(split.smearFrom, isNull);
+
+      // From the second frame on it is the previous frame's angle, not this
+      // one's -- a sector of zero width draws nothing.
+      final swept = <double>[];
+      for (var i = 0; i < 8; i++) {
+        clock.advance(const Duration(milliseconds: 16));
+        final before = split.smearFrom;
+        final now = frame();
+        if (split.smearFrom != null) {
+          expect(split.smearFrom, isNot(closeTo(now, 1e-9)));
+          swept.add(forwardDelta(split.smearFrom!, now));
+        }
+        expect(before, isNot(same(now)));
+      }
+
+      expect(swept, isNotEmpty);
+      expect(
+        swept.where((d) => d > 6),
+        isNotEmpty,
+        reason: 'the whip crosses far more than 6 degrees a frame',
+      );
+    });
+
+    test('is not drawn once the hand has joined', () {
+      freezeAt(const Duration(seconds: 10));
+      clock.advance(const Duration(seconds: 3));
+      split.release(elapsed: elapsed(), reduceMotion: false);
+      clock.advance(const Duration(milliseconds: 300));
+      frame();
+
+      expect(split.state, SplitState.joined);
+      expect(split.smearFrom, isNull);
+    });
+
+    test('a sector under six degrees is not worth drawing', () {
+      expect(smearSweep(10, 12), isNull);
+      expect(smearSweep(10, 40), closeTo(30, 1e-9));
+      // Across the top of the dial, forward, never the short way back.
+      expect(smearSweep(350, 20), closeTo(30, 1e-9));
+    });
+  });
+
+  group('the split hand opacity', () {
+    test('is fully opaque except during a Reduce Motion cross-fade', () {
+      expect(split.splitOpacity, 1.0);
+
+      freezeAt(const Duration(seconds: 10));
+      expect(split.splitOpacity, 1.0);
+
+      clock.advance(const Duration(seconds: 3));
+      split.release(elapsed: elapsed(), reduceMotion: false);
+      clock.advance(const Duration(milliseconds: 75));
+      expect(split.splitOpacity, 1.0, reason: 'the whip is travel, not a fade');
+    });
+
+    test('dissolves out and back in across the cross-fade', () {
+      freezeAt(const Duration(seconds: 10));
+      clock.advance(const Duration(seconds: 3));
+      split.release(elapsed: elapsed(), reduceMotion: true);
+
+      expect(split.splitOpacity, closeTo(1.0, 1e-9));
+
+      // Out over the first 100 ms, while the hand is still held.
+      clock.advance(const Duration(milliseconds: 50));
+      final half = split.splitOpacity;
+      expect(half, lessThan(1.0));
+      expect(half, greaterThan(0.0));
+
+      clock.advance(const Duration(milliseconds: 50));
+      expect(split.splitOpacity, closeTo(0.0, 0.01));
+
+      // Back in over the second 100 ms, now at the live angle.
+      clock.advance(const Duration(milliseconds: 50));
+      final backHalf = split.splitOpacity;
+      expect(backHalf, greaterThan(0.0));
+      expect(backHalf, lessThan(1.0));
+
+      clock.advance(const Duration(milliseconds: 60));
+      frame(reduceMotion: true);
+      expect(split.state, SplitState.joined);
+      expect(split.splitOpacity, 1.0);
+    });
+  });
+
+  group('reading the angle is safe from a build', () {
+    test('angleAt changes nothing and fires nothing', () {
+      freezeAt(const Duration(seconds: 10));
+      clock.advance(const Duration(seconds: 3));
+      split.release(elapsed: elapsed(), reduceMotion: false);
+
+      var notifications = 0;
+      split.addListener(() => notifications++);
+
+      // Well past the end of the whip: if reading advanced the mechanism, this
+      // would land it and notify from inside what is a build in production.
+      clock.advance(const Duration(milliseconds: 400));
+      final first = split.angleAt(elapsed(), reduceMotion: false);
+      final second = split.angleAt(elapsed(), reduceMotion: false);
+
+      expect(first, second);
+      expect(split.state, SplitState.catchingUp);
+      expect(split.smearFrom, isNull);
+      expect(notifications, 0);
+
+      // The ticker is what advances it.
+      split.advance(elapsed(), reduceMotion: false);
+      expect(split.state, SplitState.joined);
+      expect(notifications, 1);
+    });
+  });
+
   group('Reduce Motion', () {
     test('cross-fades instead of whipping, and still lands joined', () {
       freezeAt(const Duration(seconds: 10));
@@ -188,10 +314,12 @@ void main() {
       // No travel: the hand is held, then it is home.
       clock.advance(const Duration(milliseconds: 50));
       expect(angle(), closeTo(sweepDegFor(const Duration(seconds: 10)), 1e-9));
-      expect(split.smearsThisFrame, isFalse, reason: 'no smear under RM');
+      frame(reduceMotion: true);
+      expect(split.smearFrom, isNull, reason: 'no smear under RM');
 
       clock.advance(const Duration(milliseconds: 200));
       expect(angle(), closeTo(sweepDegFor(elapsed()), 0.001));
+      frame(reduceMotion: true);
       expect(split.state, SplitState.joined);
     });
 
@@ -199,7 +327,7 @@ void main() {
       freezeAt(const Duration(milliseconds: 10350));
       // 10350 ms falls in the 10200 ms bucket, not the 10400 one.
       expect(
-        split.angleFor(clock.now, reduceMotion: true),
+        split.angleAt(clock.now, reduceMotion: true),
         closeTo(sweepDegFor(const Duration(milliseconds: 10200)), 1e-9),
       );
     });
