@@ -7,13 +7,14 @@ import 'package:flutter/services.dart';
 import 'chrono_geometry.dart';
 import 'chrono_painter.dart';
 import 'chrono_theme.dart';
+import 'pusher.dart';
 import 'rattrapante.dart';
 import 'run_persistence.dart';
 import 'run_session.dart';
 import 'timing_engine.dart';
 
-/// The chronograph. One screen: the watch, the readout under it, the laps
-/// under that.
+/// The chronograph. One screen: the dial, the pushers under it, the readout,
+/// the laps under that.
 class ChronoScreen extends StatefulWidget {
   const ChronoScreen({super.key, this.session});
 
@@ -215,28 +216,19 @@ class _ChronoScreenState extends State<ChronoScreen>
         child: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) {
-              // The case keeps its aspect ratio and gives way to the readout on
-              // a short screen rather than overflowing it.
+              // The box is square now that the case is gone. The dial gives way
+              // to the pushers and the readout on a short screen rather than
+              // overflowing them, and is capped a shade under 320 -- about 9%
+              // down on the cased face, which is the breathing room.
               final side = math
-                  .min(
-                    constraints.maxWidth,
-                    constraints.maxHeight *
-                        0.62 *
-                        Dial.boxWidth /
-                        Dial.boxHeight,
-                  )
-                  .clamp(0.0, 402.0);
+                  .min(constraints.maxWidth - 32, constraints.maxHeight * 0.46)
+                  .clamp(0.0, 318.0);
               return Column(
                 children: [
-                  _watch(
-                    chrono,
-                    elapsed,
-                    splitDeg,
-                    reduceMotion,
-                    splits.length,
-                    side,
-                  ),
-                  const SizedBox(height: 8),
+                  _dial(chrono, elapsed, splitDeg, reduceMotion, side),
+                  const SizedBox(height: 14),
+                  _controls(),
+                  const SizedBox(height: 10),
                   _readout(chrono, elapsed, splits, laps),
                   Expanded(child: _lapStack(chrono, splits, laps)),
                 ],
@@ -248,113 +240,61 @@ class _ChronoScreenState extends State<ChronoScreen>
     );
   }
 
-  Widget _watch(
+  Widget _dial(
     ChronoTheme chrono,
     Duration elapsed,
     double splitDeg,
     bool reduceMotion,
-    int lapCount,
     double side,
   ) {
     return SizedBox(
       width: side,
       height: side * Dial.boxHeight / Dial.boxWidth,
-      child: Stack(
-        children: [
-          Positioned.fill(
-            child: ExcludeSemantics(
-              child: AnimatedBuilder(
-                animation: Listenable.merge([
-                  _startTravel,
-                  _crownTravel,
-                  _resetTravel,
-                ]),
-                builder: (context, _) => CustomPaint(
-                  painter: ChronoPainter(
-                    theme: chrono,
-                    elapsed: elapsed,
-                    splitDeg: splitDeg,
-                    splitState: _split.state,
-                    lapCount: lapCount,
-                    reduceMotion: reduceMotion,
-                    pusherTravel: (
-                      start: _startTravel.value,
-                      crown: _crownTravel.value,
-                      reset: _resetTravel.value,
-                    ),
-                    smearFromDeg: _split.smearFrom,
-                    splitFade: _split.splitOpacity,
-                  ),
-                ),
-              ),
-            ),
+      child: ExcludeSemantics(
+        child: CustomPaint(
+          painter: ChronoPainter(
+            theme: chrono,
+            elapsed: elapsed,
+            splitDeg: splitDeg,
+            splitState: _split.state,
+            reduceMotion: reduceMotion,
+            smearFromDeg: _split.smearFrom,
+            splitFade: _split.splitOpacity,
           ),
-          // Case controls. Hit targets sit over the pushers on the right
-          // flank; the painted heads move, the targets do not.
-          _hit(
-            side: side,
-            pusherDeg: 60,
-            label: _engine.isRunning ? 'Stop' : 'Start',
-            enabled: true,
-            onTap: _pressStart,
-          ),
-          _hit(
-            side: side,
-            pusherDeg: 90,
-            label: _split.state == SplitState.frozen
-                ? 'Rejoin split hand'
-                : 'Split',
-            enabled: _engine.state != TimingState.idle,
-            busy: _split.isCatchingUp,
-            onTap: _pressCrown,
-          ),
-          _hit(
-            side: side,
-            pusherDeg: 120,
-            label: 'Reset',
-            // "blocked" is semantically disabled even though nothing dims.
-            enabled: !_engine.isRunning,
-            onTap: _pressReset,
-          ),
-        ],
+        ),
       ),
     );
   }
 
-  /// A control's hit target, placed on the pusher it belongs to.
-  ///
-  /// Derived from the same angle the painter draws the head at rather than a
-  /// fraction of the frame: the case is drawn in the spec's 462-unit box and
-  /// scaled, so any fraction of the widget's own width lands somewhere else.
-  Widget _hit({
-    required double side,
-    required double pusherDeg,
-    required String label,
-    required bool enabled,
-    required VoidCallback onTap,
-    bool busy = false,
-  }) {
-    const headRadius = 220.0;
-    final scale = side / Dial.boxWidth;
-    final head = polar(Dial.centre, Dial.centre, headRadius, pusherDeg);
-    // Painter coordinates are offset by the box origin before scaling.
-    final centreX = (head.dx - Dial.boxLeft) * scale;
-    final centreY = (head.dy - Dial.boxTop) * scale;
-
-    return Positioned(
-      left: centreX - 26,
-      top: centreY - 28,
-      child: Semantics(
-        button: true,
-        enabled: enabled,
-        // Busy stays enabled: the press is swallowed, not refused.
-        label: label,
-        child: GestureDetector(
-          behavior: HitTestBehavior.opaque,
-          onTap: onTap,
-          child: SizedBox(width: 52, height: busy ? 62 : 56),
+  /// The three controls, below the face. Left to right in the order they sat
+  /// on the case: start above the crown, reset below it.
+  Widget _controls() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Pusher(
+          travel: _startTravel,
+          label: _engine.isRunning ? 'Stop' : 'Start',
+          enabled: true,
+          onTap: _pressStart,
         ),
-      ),
+        Pusher(
+          travel: _crownTravel,
+          isCrown: true,
+          label: _split.state == SplitState.frozen
+              ? 'Rejoin split hand'
+              : 'Split',
+          enabled: _engine.state != TimingState.idle,
+          onTap: _pressCrown,
+        ),
+        Pusher(
+          travel: _resetTravel,
+          label: 'Reset',
+          // "blocked" is semantically disabled even though nothing dims.
+          enabled: !_engine.isRunning,
+          onTap: _pressReset,
+        ),
+      ],
     );
   }
 

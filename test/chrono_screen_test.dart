@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:stopwatch/chrono_geometry.dart';
 import 'package:stopwatch/chrono_painter.dart';
 import 'package:stopwatch/chrono_screen.dart';
 import 'package:stopwatch/chrono_theme.dart';
@@ -102,37 +101,38 @@ void main() {
     expect(find.bySemanticsLabel('Split'), findsOneWidget);
   });
 
-  testWidgets('a tap on the painted pusher head reaches the control', (
-    tester,
-  ) async {
-    final clocks = ClockPair();
-    final session = await pumpScreen(tester, clocks);
+  testWidgets(
+    'the controls sit below the dial and answer where they are drawn',
+    (tester) async {
+      final clocks = ClockPair();
+      final session = await pumpScreen(tester, clocks);
 
-    // Taken from where the case is actually painted rather than from the
-    // widget's own placement arithmetic. A regression guard: it pins the
-    // targets to the painted heads so a change to either has to move both.
-    final canvas = tester.getRect(
-      find.byWidgetPredicate(
-        (w) => w is CustomPaint && w.painter is ChronoPainter,
-      ),
-    );
-    final scale = canvas.width / Dial.boxWidth;
-    const headRadius = 220.0;
-    final head = polar(Dial.centre, Dial.centre, headRadius, 60);
-    final target = Offset(
-      canvas.left + (head.dx - Dial.boxLeft) * scale,
-      canvas.top + (head.dy - Dial.boxTop) * scale,
-    );
+      final dial = tester.getRect(
+        find.byWidgetPredicate(
+          (w) => w is CustomPaint && w.painter is ChronoPainter,
+        ),
+      );
+      // The case is gone, so nothing rides its flank any more. Measured against
+      // where the dial is actually painted rather than against the arithmetic
+      // that placed it.
+      for (final label in ['Start', 'Split', 'Reset']) {
+        expect(
+          tester.getRect(find.bySemanticsLabel(label)).top,
+          greaterThanOrEqualTo(dial.bottom),
+          reason: '$label sits below the face, not on a case flank',
+        );
+      }
 
-    await tester.tapAt(target);
-    await tester.pump();
+      await tester.tapAt(tester.getCenter(find.bySemanticsLabel('Start')));
+      await tester.pump();
 
-    expect(
-      session.engine.state,
-      TimingState.running,
-      reason: 'the top pusher answers where it is drawn',
-    );
-  });
+      expect(
+        session.engine.state,
+        TimingState.running,
+        reason: 'the pusher answers where its head is drawn',
+      );
+    },
+  );
 
   testWidgets('reset is refused while running and clears once stopped', (
     tester,
